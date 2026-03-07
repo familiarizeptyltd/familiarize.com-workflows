@@ -1,0 +1,177 @@
+name: Translate familiarize.com
+run-name: Translate ${{ github.event.inputs.site }}.familiarize.com -> ${{ github.event.inputs.langs }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment"
+        type: environment
+        default: production
+        required: true
+      site:
+        description: "Which site to translate"
+        type: choice
+        options: [www, docs, about]
+        default: www
+        required: true
+      langs:
+        description: "Comma-separated target languages"
+        type: string
+        default: "ko,fr,nl,de,pt,ru,vi,zh,ja,zh-tw,es,fil,ms,id,tr,it,ar,fa"
+        required: false
+      llm:
+        description: "LLM provider"
+        type: choice
+        options: [professionalize, chatgpt, google, ollama]
+        default: professionalize
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  translate:
+    name: Translate ${{ inputs.site }}.familiarize.com
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment: ${{ inputs.environment }}
+
+    env:
+      SITE: ${{ inputs.site }}
+      LLM: ${{ inputs.llm }}
+      LANGS: ${{ inputs.langs }}
+      WEBSITE_MANAGER_PATH: website_manager/websiteManager
+
+    concurrency:
+      group: translate-${{ inputs.environment }}-${{ inputs.site }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout familiarize.com
+        uses: actions/checkout@v4
+        with:
+          repository: familiarizeptyltd/familiarize.com
+          token: ${{ secrets.REPO_TOKEN }}
+          ref: main
+          path: hugo_content
+          fetch-depth: 0
+          submodules: true
+
+      - name: Checkout websiteManager (C# app)
+        uses: actions/checkout@v4
+        with:
+          repository: salmansarfraz/websiteManager
+          token: ${{ secrets.WEBSITE_MANAGER_REPO_TOKEN }}
+          ref: master
+          path: website_manager
+          fetch-depth: 0
+
+      - name: Compute site variables
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$SITE" in
+            www)
+              WEBSITE="www.familiarize.com"
+              HUGO_CONTENT_PATH="hugo_content/content/www.familiarize.com/en"
+              HUGO_THEME="geekdocs"
+
+              # www does not use docs-theme i18n; provide a temporary noop i18n file
+              # so websiteManager can run without mutating shared theme i18n files.
+              TMP_I18N_DIR="${RUNNER_TEMP}/familiarize-i18n"
+              mkdir -p "$TMP_I18N_DIR"
+              printf "noop: noop\n" > "${TMP_I18N_DIR}/en.yaml"
+              HUGO_I18N_PATH="${TMP_I18N_DIR}/en.yaml"
+              ;;
+            docs)
+              WEBSITE="docs.familiarize.com"
+              HUGO_CONTENT_PATH="hugo_content/content/docs.familiarize.com/en"
+              HUGO_THEME="geekdocs"
+              HUGO_I18N_PATH="hugo_content/themes/docs-theme/i18n/en.yaml"
+              ;;
+            about)
+              WEBSITE="about.familiarize.com"
+              HUGO_CONTENT_PATH="hugo_content/content/about.familiarize.com/en"
+              HUGO_THEME="geekdocs"
+              HUGO_I18N_PATH="hugo_content/themes/docs-theme/i18n/en.yaml"
+              ;;
+            *)
+              echo "Unsupported SITE=${SITE}" >&2
+              exit 1
+              ;;
+          esac
+
+          [ -d "$HUGO_CONTENT_PATH" ] || { echo "Missing content path: $HUGO_CONTENT_PATH" >&2; exit 2; }
+          [ -f "$HUGO_I18N_PATH" ] || { echo "Missing i18n path: $HUGO_I18N_PATH" >&2; exit 3; }
+
+          {
+            echo "WEBSITE=${WEBSITE}"
+            echo "HUGO_CONTENT_PATH=${HUGO_CONTENT_PATH}"
+            echo "HUGO_THEME=${HUGO_THEME}"
+            echo "HUGO_I18N_PATH=${HUGO_I18N_PATH}"
+          } >> "$GITHUB_ENV"
+
+          echo "website=${WEBSITE}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build websiteManager
+        run: dotnet build "$WEBSITE_MANAGER_PATH/websiteManager.csproj" -c Release
+
+      - name: Run translator
+        env:
+          WEBSITE: ${{ env.WEBSITE }}
+          HUGO_THEME: ${{ env.HUGO_THEME }}
+          LLM: ${{ env.LLM }}
+          LANGS: ${{ env.LANGS }}
+          HUGO_CONTENT_PATH: ${{ env.HUGO_CONTENT_PATH }}
+          HUGO_I18N_PATH: ${{ env.HUGO_I18N_PATH }}
+        run: dotnet run --project "$WEBSITE_MANAGER_PATH/websiteManager.csproj" -- github
+
+      - name: Commit and push translation memory (websiteManager)
+        working-directory: website_manager
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin
+          git pull --strategy=ours origin master || true
+
+          git add "websiteManager/translations/${WEBSITE}"
+          if git diff --cached --quiet; then
+            echo "No translation-memory changes in websiteManager."
+          else
+            git commit -m "Update ${WEBSITE} translation artifacts for ${LANGS} ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+            git push origin HEAD:master
+          fi
+
+      - name: Commit and push translated site content (familiarize.com)
+        working-directory: hugo_content
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin
+          git pull --strategy=ours origin main || true
+
+          git add "content/${WEBSITE}"
+          if [[ "$SITE" == "docs" || "$SITE" == "about" ]]; then
+            git add "themes/docs-theme/i18n"
+          fi
+
+          if git diff --cached --quiet; then
+            echo "No translated content changes in familiarize.com."
+          else
+            git commit -m "Translate ${WEBSITE} to ${LANGS} (${LLM}) ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+            git push origin HEAD:main
+          fi
