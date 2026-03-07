@@ -38,6 +38,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          repository: familiarizeptyltd/familiarize.com
+          token: ${{ secrets.REPO_TOKEN }}
+          ref: main
           fetch-depth: 0
           submodules: true
 
