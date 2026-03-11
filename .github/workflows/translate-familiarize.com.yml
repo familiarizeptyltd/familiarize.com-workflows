@@ -29,6 +29,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   translate:
@@ -175,3 +176,26 @@ jobs:
             git commit -m "Translate ${WEBSITE} to ${LANGS} (${LLM}) ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
             git push origin HEAD:main
           fi
+
+      - name: Dispatch deployment workflow
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.REPO_TOKEN }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+
+          curl -sS -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/familiarizeptyltd/familiarize.com-workflows/actions/workflows/familiarize.com.yml/dispatches" \
+            -d @- <<JSON
+          {
+            "ref": "main",
+            "inputs": {
+              "environment": "${ENVIRONMENT}",
+              "site": "${SITE}"
+            }
+          }
+          JSON
