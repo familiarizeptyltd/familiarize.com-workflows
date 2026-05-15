@@ -39,6 +39,8 @@ Required repository secrets:
 - `PROFESSIONALIZE_LLM_MODEL`
 - `PROFESSIONALIZE_EMBEDDING_MODEL`
 
+If these are stored as environment-scoped secrets, select the same `environment` input when dispatching the workflow. A run with missing analytics credentials is not useful because it will collect zero GSC/GA4 opportunities.
+
 Optional Google Ads secrets:
 
 - `GOOGLE_ADS_DEVELOPER_TOKEN`

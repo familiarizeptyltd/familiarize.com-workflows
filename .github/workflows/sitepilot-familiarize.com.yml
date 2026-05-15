@@ -116,6 +116,29 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e sitepilot
 
+      - name: Verify required SitePilot secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            REPO_TOKEN \
+            GOOGLE_CREDENTIALS_JSON \
+            PROFESSIONALIZE_API_KEY \
+            PROFESSIONALIZE_BASE_URL \
+            PROFESSIONALIZE_LLM_MODEL \
+            PROFESSIONALIZE_EMBEDDING_MODEL
+          do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            printf 'Missing required SitePilot secrets/env values:\n' >&2
+            printf -- '- %s\n' "${missing[@]}" >&2
+            exit 2
+          fi
+
       - name: Validate SitePilot profile
         shell: bash
         run: |
