@@ -5,6 +5,11 @@ run-name: >-
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: "GitHub environment for secrets"
+        type: environment
+        default: production
+        required: true
       mode:
         description: "Run mode"
         type: choice
@@ -42,6 +47,7 @@ jobs:
     name: SitePilot ${{ inputs.section }} ${{ inputs.mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    environment: ${{ inputs.environment }}
 
     concurrency:
       group: sitepilot-${{ inputs.section }}-${{ inputs.mode }}

@@ -15,6 +15,7 @@ Use it to run SitePilot from this workflows repository against the content repos
 Manual inputs:
 
 - `mode`: `dry` or `live`
+- `environment`: GitHub environment used for environment-scoped secrets, default `production`
 - `section`: `docs`, `www`, or `about`
 - `sitepilot_ref`: SitePilot branch/tag/SHA, default `main`
 - `content_ref`: content branch/tag/SHA, default `main`
