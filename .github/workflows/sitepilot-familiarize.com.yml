@@ -132,22 +132,6 @@ jobs:
             printf -- '- %s\n' "${missing[@]}" >&2
             exit 2
           fi
-          python - <<'PY'
-          import json
-          import os
-
-          raw = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
-          print("GOOGLE_CREDENTIALS_JSON length:", len(raw))
-          print("GOOGLE_CREDENTIALS_JSON starts_with_brace:", raw.startswith("{"))
-          print("GOOGLE_CREDENTIALS_JSON contains_type_key:", '"type"' in raw)
-          try:
-              parsed = json.loads(raw)
-              print("GOOGLE_CREDENTIALS_JSON json_parse_ok:", True)
-              print("GOOGLE_CREDENTIALS_JSON credential_type:", parsed.get("type", ""))
-          except Exception as exc:
-              print("GOOGLE_CREDENTIALS_JSON json_parse_ok:", False)
-              print("GOOGLE_CREDENTIALS_JSON json_parse_error:", type(exc).__name__)
-          PY
 
       - name: Validate SitePilot profile
         shell: bash
