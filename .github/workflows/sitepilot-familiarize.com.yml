@@ -185,8 +185,15 @@ jobs:
           from collections import Counter
           report = json.load(open(sys.argv[1], encoding="utf-8"))
           actions = report.get("actions", [])
+          content_actions = [
+              item for item in actions
+              if item.get("kind") in {"content_update", "content_create", "content_folder_create"}
+          ]
           statuses = Counter(item.get("status", "") for item in actions)
+          content_statuses = Counter(item.get("status", "") for item in content_actions)
           kinds = Counter(item.get("kind", "") for item in actions)
+          execution_summary = report.get("execution_summary", {})
+          content_execution = execution_summary.get("content_execution", {}) or report.get("content_execution_metrics", {})
           prs = [
               item.get("metadata", {}).get("pull_request", {})
               for item in actions
@@ -195,9 +202,17 @@ jobs:
           prs = [item for item in prs if item.get("url")]
           print("## SitePilot Summary")
           print(f"- Opportunities: {len(report.get('opportunities', []))}")
+          print(f"- Actionable opportunities: {len(report.get('actionable_opportunities', []))}")
           print(f"- Actions: {len(actions)}")
+          print(f"- Content actions: {len(content_actions)}")
+          print(f"- Accepted content actions: {content_execution.get('accepted_content_actions', content_execution.get('accepted_files', 0))}")
+          print(f"- LLM drafts used: {content_execution.get('llm_drafts_used', 0)}")
+          print(f"- Repaired files: {content_execution.get('post_draft_repairs', 0)}")
+          print(f"- Pre-LLM skips: `{content_execution.get('pre_llm_skips', {})}`")
+          print(f"- Post-draft hard rejections: `{content_execution.get('post_draft_hard_rejections', {})}`")
           print(f"- Failures: {len(report.get('failures', []))}")
           print(f"- Statuses: `{dict(statuses)}`")
+          print(f"- Content statuses: `{dict(content_statuses)}`")
           print(f"- Kinds: `{dict(kinds)}`")
           for pr in prs:
               print(f"- Pull request: {pr.get('url')}")
