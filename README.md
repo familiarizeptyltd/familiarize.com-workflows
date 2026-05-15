@@ -15,7 +15,6 @@ Use it to run SitePilot from this workflows repository against the content repos
 Manual inputs:
 
 - `mode`: `dry` or `live`
-- `environment`: GitHub environment used for environment-scoped secrets, default `production`
 - `section`: `docs`, `www`, or `about`
 - `sitepilot_ref`: SitePilot branch/tag/SHA, default `main`
 - `content_ref`: content branch/tag/SHA, default `main`
@@ -39,7 +38,7 @@ Required repository secrets:
 - `PROFESSIONALIZE_LLM_MODEL`
 - `PROFESSIONALIZE_EMBEDDING_MODEL`
 
-If these are stored as environment-scoped secrets, select the same `environment` input when dispatching the workflow. A run with missing analytics credentials is not useful because it will collect zero GSC/GA4 opportunities.
+Use repository-level secrets for this workflow. A run with missing analytics credentials is not useful because it will collect zero GSC/GA4 opportunities.
 
 Optional Google Ads secrets:
 
