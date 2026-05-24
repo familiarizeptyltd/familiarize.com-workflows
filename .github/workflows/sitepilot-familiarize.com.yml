@@ -110,6 +110,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e sitepilot
 
+      - name: Restore SitePilot runtime state
+        uses: actions/cache/restore@v4
+        with:
+          path: .sitepilot
+          key: sitepilot-runtime-${{ runner.os }}-${{ inputs.section }}-${{ github.run_id }}
+          restore-keys: |
+            sitepilot-runtime-${{ runner.os }}-${{ inputs.section }}-
+
       - name: Verify required SitePilot secrets
         shell: bash
         run: |
@@ -225,3 +233,10 @@ jobs:
           name: sitepilot-${{ inputs.section }}-${{ inputs.mode }}-${{ github.run_id }}
           path: artifacts/
           if-no-files-found: warn
+
+      - name: Save SitePilot runtime state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .sitepilot
+          key: sitepilot-runtime-${{ runner.os }}-${{ inputs.section }}-${{ github.run_id }}
