@@ -3,8 +3,17 @@ run-name: >-
   SitePilot ${{ inputs.mode }} ${{ inputs.section }} by @${{ github.actor }}
 
 on:
+  schedule:
+    # Daily at 02:00 UTC (07:00 Asia/Karachi). Scheduled runs go live with the lean brain.
+    - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
+      brain:
+        description: "Brain"
+        type: choice
+        options: [lean, cycle]
+        default: lean
+        required: true
       mode:
         description: "Run mode"
         type: choice
@@ -48,8 +57,10 @@ jobs:
       cancel-in-progress: false
 
     env:
-      SECTION: ${{ inputs.section }}
-      MODE: ${{ inputs.mode }}
+      # Scheduled (cron) runs have empty inputs -> default to a live lean docs run.
+      SECTION: ${{ inputs.section || 'docs' }}
+      MODE: ${{ inputs.mode || 'live' }}
+      BRAIN: ${{ inputs.brain || 'lean' }}
       PROFILE: sitepilot/profiles/familiarize.yaml
       CONTENT_REPO_PATH: content
       WORKFLOWS_REPO_PATH: workflows
@@ -84,7 +95,7 @@ jobs:
         with:
           repository: familiarizeptyltd/SitePilot
           token: ${{ secrets.REPO_TOKEN }}
-          ref: ${{ inputs.sitepilot_ref }}
+          ref: ${{ inputs.sitepilot_ref || 'main' }}
           path: sitepilot
           fetch-depth: 0
 
@@ -93,7 +104,7 @@ jobs:
         with:
           repository: familiarizeptyltd/familiarize.com
           token: ${{ secrets.REPO_TOKEN }}
-          ref: ${{ inputs.content_ref }}
+          ref: ${{ inputs.content_ref || 'main' }}
           path: content
           fetch-depth: 0
           submodules: true
@@ -161,7 +172,32 @@ jobs:
             --rebuild \
             --output artifacts/semantic-index.json
 
-      - name: Run SitePilot cycle
+      - name: Run SitePilot (lean brain)
+        if: env.BRAIN == 'lean'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          # Moderate cadence: ~10 improvements + 1 new topic per daily run.
+          # Live runs auto-merge self-reviewed changes (improvements and new pages);
+          # the self-review pass fails closed under auto-merge.
+          MODE_FLAGS="--dry-run"
+          if [[ "$MODE" == "live" ]]; then
+            MODE_FLAGS="--live --auto-merge-low-risk --auto-merge-new-pages"
+          fi
+          python -m sitepilot lean-cycle \
+            --profile "$PROFILE" \
+            --section "$SECTION" \
+            --content-repo-path "$CONTENT_REPO_PATH" \
+            --workflows-repo-path "$WORKFLOWS_REPO_PATH" \
+            --max-improve-prs 10 \
+            --max-new-topic-prs 1 \
+            --cooldown-days 14 \
+            $MODE_FLAGS \
+            --output "artifacts/sitepilot-${SECTION}-${MODE}.json"
+
+      - name: Run SitePilot (legacy cycle)
+        if: env.BRAIN == 'cycle'
         shell: bash
         run: |
           set -euo pipefail
@@ -178,8 +214,41 @@ jobs:
             "$MODE_FLAG" \
             --output "artifacts/sitepilot-${SECTION}-${MODE}.json"
 
+      - name: Summarize lean report
+        if: always() && env.BRAIN == 'lean'
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT="artifacts/sitepilot-${SECTION}-${MODE}.json"
+          if [[ ! -f "$REPORT" ]]; then
+            echo "No lean report found." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python - "$REPORT" <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          from collections import Counter
+          r = json.load(open(sys.argv[1], encoding="utf-8"))
+          outcomes = r.get("outcomes", [])
+          status = Counter(o.get("status", "") for o in outcomes)
+          print("## SitePilot Lean Summary")
+          print(f"- Dry run: {r.get('dry_run')}")
+          print(f"- Snapshot: {', '.join(r.get('snapshot_statuses', []))}")
+          print(f"- Opportunities: {r.get('opportunities_found')} | improve candidates: {r.get('improve_candidates')} | new-topic candidates: {r.get('new_topic_candidates')}")
+          print(f"- Outcomes: `{dict(status)}`")
+          prs = [o for o in outcomes if o.get("status") == "pr_opened"]
+          if prs:
+              print("### PRs opened")
+              for o in prs:
+                  print(f"- [{o.get('action_type')}] {o.get('title')} -> {o.get('pr_url')}")
+          rej = [o for o in outcomes if str(o.get("status")) == "skipped" and str(o.get("reason", "")).startswith("self_review")]
+          if rej:
+              print("### Self-review rejected")
+              for o in rej:
+                  print(f"- {o.get('title')}: {o.get('reason')}")
+          PY
+
       - name: Summarize SitePilot report
-        if: always()
+        if: always() && env.BRAIN == 'cycle'
         shell: bash
         run: |
           set -euo pipefail
