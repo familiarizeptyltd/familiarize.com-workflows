@@ -46,7 +46,11 @@ jobs:
 
     concurrency:
       group: translate-${{ inputs.environment }}-${{ inputs.site }}
-      cancel-in-progress: false
+      # Debounce: a batch of content merges dispatches many translate runs in
+      # quick succession. Cancel the in-progress run so only the last one (which
+      # by then sees all the batch's changes) completes -> one translate, then
+      # one deploy, instead of one per merged PR.
+      cancel-in-progress: true
 
     steps:
       - name: Checkout familiarize.com
