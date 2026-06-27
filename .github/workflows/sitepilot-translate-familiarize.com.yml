@@ -20,7 +20,7 @@ on:
       site:
         description: "Which site to translate"
         type: choice
-        options: [docs]
+        options: [www, docs, about]
         default: docs
         required: true
       languages:
@@ -64,7 +64,7 @@ jobs:
 
     env:
       SITE: ${{ inputs.site }}
-      WEBSITE: docs.familiarize.com
+      WEBSITE: ${{ inputs.site }}.familiarize.com
       LANGS: ${{ inputs.languages }}
       DISABLED_LOCALES: ${{ inputs.exclude_languages }}
       MODE: ${{ inputs.mode }}
@@ -192,4 +192,4 @@ jobs:
           git add "content/${WEBSITE}"
           git diff --cached --quiet || { git commit -m "SitePilot: translate ${WEBSITE} [${LANGS}] ($(date -u +'%FT%TZ'))"; git push origin HEAD:main; }
           cd ../sitepilot
-          python -m sitepilot deploy --site "${SITE}" --environment "${{ inputs.environment }}" --max-retries 2 --verify-url "https://docs.familiarize.com/"
+          python -m sitepilot deploy --site "${SITE}" --environment "${{ inputs.environment }}" --max-retries 2 --verify-url "https://${WEBSITE}/"
