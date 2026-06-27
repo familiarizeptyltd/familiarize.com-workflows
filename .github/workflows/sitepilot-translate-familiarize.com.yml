@@ -44,6 +44,11 @@ on:
         type: boolean
         default: true
         required: false
+      changed_only:
+        description: "Ongoing: translate only the English pages the triggering merge changed (full mode so edits propagate)"
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: write
@@ -122,6 +127,18 @@ jobs:
           [ "${{ inputs.fill_untranslated_only }}" = "true" ] && MINIMAL="--fill-untranslated-only"
           PERSIST=""
           [ "$MODE" = "live" ] && PERSIST="--persist-tm"
+          CHANGED_ARG=""
+          if [ "${{ inputs.changed_only }}" = "true" ]; then
+            # Ongoing post-merge: translate only the English pages this merge touched,
+            # in FULL mode (not minimal-churn) so English edits propagate to locales.
+            git -C hugo_content diff --name-only HEAD~1 HEAD -- "content/${WEBSITE}/en" | grep '\.md$' > "${RUNNER_TEMP}/changed.txt" || true
+            echo "Changed English pages:"; cat "${RUNNER_TEMP}/changed.txt" || true
+            if [ ! -s "${RUNNER_TEMP}/changed.txt" ]; then
+              echo "No changed English pages in HEAD~1..HEAD; nothing to translate."; exit 0
+            fi
+            CHANGED_ARG="--changed-files @${RUNNER_TEMP}/changed.txt"
+            MINIMAL=""  # full mode for changed pages
+          fi
           python -m sitepilot translate \
             --content-repo-path hugo_content \
             --en-subpath "content/${WEBSITE}/en" \
@@ -129,7 +146,7 @@ jobs:
             --website "${WEBSITE}" \
             --languages "${LANGS}" \
             --exclude-languages "${DISABLED_LOCALES}" \
-            --fill-misses --write $MINIMAL $PERSIST $GLOSSARY_ARG
+            --fill-misses --write $MINIMAL $PERSIST $CHANGED_ARG $GLOSSARY_ARG
 
       # ---- review mode: open a PR with the locale changes, no deploy ----
       - name: Open review PR (review mode)
