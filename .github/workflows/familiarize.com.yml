@@ -25,7 +25,9 @@ jobs:
     name: Build and Deploy
     environment: ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # docs.familiarize.com is large (~20 locales x ~1.7k pages); the Hugo build is
+    # heavy. Allow ample headroom under GitHub's 360-min hosted-runner hard cap.
+    timeout-minutes: 350
 
     env:
       SITE: ${{ github.event.inputs.site }}
