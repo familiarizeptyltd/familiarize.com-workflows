@@ -1,13 +1,13 @@
 name: SitePilot Translate familiarize.com
-run-name: SitePilot translate ${{ github.event.inputs.site }}.familiarize.com
+run-name: SitePilot translate ${{ github.event.inputs.site }} (${{ github.event.inputs.languages }}, ${{ github.event.inputs.mode }})
 
-# Go-live wiring for SitePilot-owned translation (replaces the C# websiteManager
-# translate-familiarize.com.yml). Reuses the same translation memory (hosted in
-# the websiteManager repo) verbatim and translates only new/changed strings.
+# SitePilot-owned translation (replaces the C# websiteManager translate workflow).
+# Reuses the existing translation memory and translates only new/changed strings.
 #
-# DORMANT until go-live: this is workflow_dispatch-only, so it never runs on its
-# own. To go live, repoint sitepilot-post-merge's dispatch from
-# translate-familiarize.com.yml to this file. Until then it changes nothing.
+# DORMANT until go-live: workflow_dispatch-only. Two modes:
+#   review (default) -> commit locale changes to a branch + open a PR; NO deploy.
+#   live             -> commit to main, persist TM, then reliable deploy.
+# Start with mode=review, languages=ja to validate the first run as a PR.
 
 on:
   workflow_dispatch:
@@ -23,31 +23,49 @@ on:
         options: [docs]
         default: docs
         required: true
+      languages:
+        description: "Locales to translate (comma list, or 'all')"
+        type: string
+        default: "ja"
+        required: false
       exclude_languages:
         description: "Locales to skip (zero-traffic). hi = Hindi (1 impr / 0 clicks per 28d)."
         type: string
         default: "hi"
         required: false
+      mode:
+        description: "review = open a PR, no deploy | live = commit to main + deploy"
+        type: choice
+        options: [review, live]
+        default: review
+        required: true
+      fill_untranslated_only:
+        description: "Minimal churn: fix only untranslated content, keep existing translations"
+        type: boolean
+        default: true
+        required: false
 
 permissions:
   contents: write
   actions: write
+  pull-requests: write
 
 jobs:
   translate:
-    name: SitePilot translate ${{ inputs.site }}.familiarize.com
+    name: SitePilot translate ${{ inputs.site }} (${{ inputs.mode }})
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     environment: ${{ inputs.environment }}
 
     env:
       SITE: ${{ inputs.site }}
       WEBSITE: docs.familiarize.com
+      LANGS: ${{ inputs.languages }}
       DISABLED_LOCALES: ${{ inputs.exclude_languages }}
+      MODE: ${{ inputs.mode }}
 
     concurrency:
       group: sitepilot-translate-${{ inputs.environment }}-${{ inputs.site }}
-      # Debounce a batch of content merges to a single translate + deploy.
       cancel-in-progress: true
 
     steps:
@@ -90,7 +108,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ./sitepilot
 
-      - name: Translate (reuse TM, fill misses, glossary-aware)
+      - name: Translate (reuse TM, fill untranslated, glossary-aware)
         shell: bash
         env:
           PROFESSIONALIZE_BASE_URL: ${{ secrets.PROFESSIONALIZE_BASE_URL }}
@@ -100,53 +118,61 @@ jobs:
           set -euo pipefail
           GLOSSARY_ARG=""
           [ -f hugo_content/.sitepilot/glossary.json ] && GLOSSARY_ARG="--glossary hugo_content/.sitepilot/glossary.json"
+          MINIMAL=""
+          [ "${{ inputs.fill_untranslated_only }}" = "true" ] && MINIMAL="--fill-untranslated-only"
+          PERSIST=""
+          [ "$MODE" = "live" ] && PERSIST="--persist-tm"
           python -m sitepilot translate \
             --content-repo-path hugo_content \
             --en-subpath "content/${WEBSITE}/en" \
             --tm-dir "website_manager/websiteManager/translations/${WEBSITE}" \
             --website "${WEBSITE}" \
-            --languages all \
+            --languages "${LANGS}" \
             --exclude-languages "${DISABLED_LOCALES}" \
-            --fill-misses --persist-tm --write \
-            $GLOSSARY_ARG
+            --fill-misses --write $MINIMAL $PERSIST $GLOSSARY_ARG
 
-      - name: Commit updated translation memory (websiteManager)
-        working-directory: website_manager
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin && git pull --strategy=ours origin master || true
-          git add "websiteManager/translations/${WEBSITE}"
-          if git diff --cached --quiet; then echo "No TM changes."; else
-            git commit -m "SitePilot: update ${WEBSITE} translation memory ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
-            git push origin HEAD:master
-          fi
-
-      - name: Commit translated content (familiarize.com)
+      # ---- review mode: open a PR with the locale changes, no deploy ----
+      - name: Open review PR (review mode)
+        if: ${{ inputs.mode == 'review' }}
         working-directory: hugo_content
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.REPO_TOKEN }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin && git pull --strategy=ours origin main || true
+          BRANCH="sitepilot/translate-${SITE}-${LANGS//,/_}-${{ github.run_number }}"
+          git checkout -b "$BRANCH"
           git add "content/${WEBSITE}"
-          if git diff --cached --quiet; then echo "No content changes."; else
-            git commit -m "SitePilot: translate ${WEBSITE} (excluding: ${DISABLED_LOCALES:-none}) ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
-            git push origin HEAD:main
+          if git diff --cached --quiet; then
+            echo "No locale changes to review."; exit 0
           fi
+          git commit -m "SitePilot translate ${WEBSITE} [${LANGS}] (review) ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+          git push origin "$BRANCH"
+          gh pr create --repo familiarizeptyltd/familiarize.com --base main --head "$BRANCH" \
+            --title "SitePilot translation review: ${WEBSITE} [${LANGS}]" \
+            --body "First SitePilot-owned translation run (mode=review, minimal churn=${{ inputs.fill_untranslated_only }}, excluding: ${DISABLED_LOCALES:-none}). Review the locale changes; merge to accept, then run a live deploy. No deploy was triggered by this run."
 
-      - name: Reliable deploy (dispatch -> watch -> retry -> verify)
-        if: success()
+      # ---- live mode: commit to main, persist TM, deploy ----
+      - name: Commit TM + content and deploy (live mode)
+        if: ${{ inputs.mode == 'live' }}
         shell: bash
         env:
           GITHUB_PAT: ${{ secrets.REPO_TOKEN }}
         run: |
           set -euo pipefail
-          python -m sitepilot deploy \
-            --site "${SITE}" \
-            --environment "${{ inputs.environment }}" \
-            --max-retries 2 \
-            --verify-url "https://docs.familiarize.com/"
+          cd website_manager
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin && git pull --strategy=ours origin master || true
+          git add "websiteManager/translations/${WEBSITE}"
+          git diff --cached --quiet || { git commit -m "SitePilot: update ${WEBSITE} TM ($(date -u +'%FT%TZ'))"; git push origin HEAD:master; }
+          cd ../hugo_content
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin && git pull --strategy=ours origin main || true
+          git add "content/${WEBSITE}"
+          git diff --cached --quiet || { git commit -m "SitePilot: translate ${WEBSITE} [${LANGS}] ($(date -u +'%FT%TZ'))"; git push origin HEAD:main; }
+          cd ../sitepilot
+          python -m sitepilot deploy --site "${SITE}" --environment "${{ inputs.environment }}" --max-retries 2 --verify-url "https://docs.familiarize.com/"
