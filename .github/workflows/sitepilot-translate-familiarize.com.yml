@@ -1,0 +1,152 @@
+name: SitePilot Translate familiarize.com
+run-name: SitePilot translate ${{ github.event.inputs.site }}.familiarize.com
+
+# Go-live wiring for SitePilot-owned translation (replaces the C# websiteManager
+# translate-familiarize.com.yml). Reuses the same translation memory (hosted in
+# the websiteManager repo) verbatim and translates only new/changed strings.
+#
+# DORMANT until go-live: this is workflow_dispatch-only, so it never runs on its
+# own. To go live, repoint sitepilot-post-merge's dispatch from
+# translate-familiarize.com.yml to this file. Until then it changes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment"
+        type: environment
+        default: production
+        required: true
+      site:
+        description: "Which site to translate"
+        type: choice
+        options: [docs]
+        default: docs
+        required: true
+      exclude_languages:
+        description: "Locales to skip (zero-traffic). hi = Hindi (1 impr / 0 clicks per 28d)."
+        type: string
+        default: "hi"
+        required: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  translate:
+    name: SitePilot translate ${{ inputs.site }}.familiarize.com
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: ${{ inputs.environment }}
+
+    env:
+      SITE: ${{ inputs.site }}
+      WEBSITE: docs.familiarize.com
+      DISABLED_LOCALES: ${{ inputs.exclude_languages }}
+
+    concurrency:
+      group: sitepilot-translate-${{ inputs.environment }}-${{ inputs.site }}
+      # Debounce a batch of content merges to a single translate + deploy.
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout familiarize.com (content)
+        uses: actions/checkout@v4
+        with:
+          repository: familiarizeptyltd/familiarize.com
+          token: ${{ secrets.REPO_TOKEN }}
+          ref: main
+          path: hugo_content
+          fetch-depth: 0
+          submodules: true
+
+      - name: Checkout websiteManager (translation memory)
+        uses: actions/checkout@v4
+        with:
+          repository: salmansarfraz/websiteManager
+          token: ${{ secrets.WEBSITE_MANAGER_REPO_TOKEN }}
+          ref: master
+          path: website_manager
+          fetch-depth: 0
+
+      - name: Checkout SitePilot
+        uses: actions/checkout@v4
+        with:
+          repository: familiarizeptyltd/SitePilot
+          token: ${{ secrets.REPO_TOKEN }}
+          ref: main
+          path: sitepilot
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install SitePilot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ./sitepilot
+
+      - name: Translate (reuse TM, fill misses, glossary-aware)
+        shell: bash
+        env:
+          PROFESSIONALIZE_BASE_URL: ${{ secrets.PROFESSIONALIZE_BASE_URL }}
+          PROFESSIONALIZE_API_KEY: ${{ secrets.PROFESSIONALIZE_API_KEY }}
+          PROFESSIONALIZE_TRANSLATION_MODEL: recommended
+        run: |
+          set -euo pipefail
+          GLOSSARY_ARG=""
+          [ -f hugo_content/.sitepilot/glossary.json ] && GLOSSARY_ARG="--glossary hugo_content/.sitepilot/glossary.json"
+          python -m sitepilot translate \
+            --content-repo-path hugo_content \
+            --en-subpath "content/${WEBSITE}/en" \
+            --tm-dir "website_manager/websiteManager/translations/${WEBSITE}" \
+            --website "${WEBSITE}" \
+            --languages all \
+            --exclude-languages "${DISABLED_LOCALES}" \
+            --fill-misses --persist-tm --write \
+            $GLOSSARY_ARG
+
+      - name: Commit updated translation memory (websiteManager)
+        working-directory: website_manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin && git pull --strategy=ours origin master || true
+          git add "websiteManager/translations/${WEBSITE}"
+          if git diff --cached --quiet; then echo "No TM changes."; else
+            git commit -m "SitePilot: update ${WEBSITE} translation memory ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+            git push origin HEAD:master
+          fi
+
+      - name: Commit translated content (familiarize.com)
+        working-directory: hugo_content
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin && git pull --strategy=ours origin main || true
+          git add "content/${WEBSITE}"
+          if git diff --cached --quiet; then echo "No content changes."; else
+            git commit -m "SitePilot: translate ${WEBSITE} (excluding: ${DISABLED_LOCALES:-none}) ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+            git push origin HEAD:main
+          fi
+
+      - name: Reliable deploy (dispatch -> watch -> retry -> verify)
+        if: success()
+        shell: bash
+        env:
+          GITHUB_PAT: ${{ secrets.REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m sitepilot deploy \
+            --site "${SITE}" \
+            --environment "${{ inputs.environment }}" \
+            --max-retries 2 \
+            --verify-url "https://docs.familiarize.com/"
