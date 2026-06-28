@@ -49,6 +49,11 @@ on:
         type: boolean
         default: false
         required: false
+      translate_i18n:
+        description: "Also translate the theme i18n strings (themes/docs-theme/i18n/en.yaml -> locale yamls)"
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: write
@@ -147,6 +152,25 @@ jobs:
             --languages "${LANGS}" \
             --exclude-languages "${DISABLED_LOCALES}" \
             --fill-misses --write $MINIMAL $PERSIST $CHANGED_ARG $GLOSSARY_ARG
+
+      - name: Translate theme i18n (when requested)
+        if: ${{ inputs.translate_i18n }}
+        shell: bash
+        env:
+          PROFESSIONALIZE_BASE_URL: ${{ secrets.PROFESSIONALIZE_BASE_URL }}
+          PROFESSIONALIZE_API_KEY: ${{ secrets.PROFESSIONALIZE_API_KEY }}
+          PROFESSIONALIZE_TRANSLATION_MODEL: recommended
+        run: |
+          set -euo pipefail
+          PERSIST=""
+          [ "$MODE" = "live" ] && PERSIST="--persist-tm"
+          python -m sitepilot translate-i18n \
+            --i18n-dir hugo_content/themes/docs-theme/i18n \
+            --tm-dir "website_manager/websiteManager/translations/${WEBSITE}" \
+            --website "${WEBSITE}" \
+            --languages "${LANGS}" \
+            --exclude-languages "${DISABLED_LOCALES}" \
+            --fill-misses $PERSIST
 
       # ---- review mode: open a PR with the locale changes, no deploy ----
       - name: Open review PR (review mode)

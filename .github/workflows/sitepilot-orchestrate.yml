@@ -1,0 +1,99 @@
+name: SitePilot Orchestrate
+run-name: Orchestrate content-merged ${{ github.event.client_payload.after }}
+
+# Public-repo orchestrator. The private content repo's thin forwarder fires a
+# repository_dispatch here on every content/en or theme-i18n merge; this workflow
+# does ALL the work (detect changed sites + i18n, dispatch SitePilot translate
+# which then deploys) -- so it runs on the public repo's free minutes, not the
+# private repo's allowance.
+
+on:
+  repository_dispatch:
+    types: [content-merged]
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: sitepilot-orchestrate-${{ github.event.client_payload.after }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      sites: ${{ steps.d.outputs.sites }}
+      count: ${{ steps.d.outputs.count }}
+      i18n: ${{ steps.d.outputs.i18n }}
+    steps:
+      - name: Checkout content repo (private, via token)
+        uses: actions/checkout@v4
+        with:
+          repository: familiarizeptyltd/familiarize.com
+          token: ${{ secrets.REPO_TOKEN }}
+          ref: main
+          fetch-depth: 0
+
+      - name: Detect changed sites + i18n
+        id: d
+        shell: bash
+        run: |
+          set -euo pipefail
+          BEFORE="${{ github.event.client_payload.before }}"
+          AFTER="${{ github.event.client_payload.after }}"
+          if [[ -z "$BEFORE" || "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+            BEFORE="$(git rev-parse "${AFTER}^" 2>/dev/null || true)"
+          fi
+          if [[ -z "$BEFORE" ]]; then
+            mapfile -t CHANGED < <(git show --pretty='' --name-only "$AFTER")
+          else
+            mapfile -t CHANGED < <(git diff --name-only "$BEFORE" "$AFTER")
+          fi
+
+          declare -A SITES=(); I18N=false
+          for p in "${CHANGED[@]}"; do
+            case "$p" in
+              content/www.familiarize.com/en/*)  SITES[www]=1 ;;
+              content/docs.familiarize.com/en/*) SITES[docs]=1 ;;
+              content/about.familiarize.com/en/*) SITES[about]=1 ;;
+              themes/docs-theme/i18n/en.yaml)    SITES[docs]=1; SITES[about]=1; I18N=true ;;
+            esac
+          done
+
+          ordered=()
+          for s in www docs about; do [[ -n "${SITES[$s]:-}" ]] && ordered+=("\"$s\""); done
+          json="[$(IFS=,; echo "${ordered[*]}")]"
+          {
+            echo "sites=$json"
+            echo "count=${#ordered[@]}"
+            echo "i18n=$I18N"
+          } >> "$GITHUB_OUTPUT"
+          echo "Changed sites: $json | i18n: $I18N"
+
+  translate:
+    needs: detect
+    if: needs.detect.outputs.count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        site: ${{ fromJson(needs.detect.outputs.sites) }}
+    steps:
+      - name: Dispatch SitePilot translate (live, changed-only)
+        env:
+          GH_TOKEN: ${{ secrets.REPO_TOKEN }}
+          SITE: ${{ matrix.site }}
+          I18N: ${{ needs.detect.outputs.i18n }}
+        run: |
+          set -euo pipefail
+          I18N_FLAG=false
+          if [ "$I18N" = "true" ] && { [ "$SITE" = "docs" ] || [ "$SITE" = "about" ]; }; then
+            I18N_FLAG=true
+          fi
+          curl -sS -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/familiarizeptyltd/familiarize.com-workflows/actions/workflows/sitepilot-translate-familiarize.com.yml/dispatches \
+            -d "{\"ref\":\"main\",\"inputs\":{\"environment\":\"production\",\"site\":\"${SITE}\",\"languages\":\"all\",\"exclude_languages\":\"hi\",\"mode\":\"live\",\"fill_untranslated_only\":\"false\",\"changed_only\":\"true\",\"translate_i18n\":\"${I18N_FLAG}\"}}"
+          echo "Dispatched SitePilot translate for ${SITE} (i18n=${I18N_FLAG})"
