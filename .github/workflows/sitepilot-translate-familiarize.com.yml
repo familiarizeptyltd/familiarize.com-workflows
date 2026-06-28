@@ -20,7 +20,7 @@ on:
       site:
         description: "Which site to translate"
         type: choice
-        options: [docs]
+        options: [www, docs, about]
         default: docs
         required: true
       languages:
@@ -44,6 +44,16 @@ on:
         type: boolean
         default: true
         required: false
+      changed_only:
+        description: "Ongoing: translate only the English pages the triggering merge changed (full mode so edits propagate)"
+        type: boolean
+        default: false
+        required: false
+      translate_i18n:
+        description: "Also translate the theme i18n strings (themes/docs-theme/i18n/en.yaml -> locale yamls)"
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: write
@@ -59,7 +69,7 @@ jobs:
 
     env:
       SITE: ${{ inputs.site }}
-      WEBSITE: docs.familiarize.com
+      WEBSITE: ${{ inputs.site }}.familiarize.com
       LANGS: ${{ inputs.languages }}
       DISABLED_LOCALES: ${{ inputs.exclude_languages }}
       MODE: ${{ inputs.mode }}
@@ -122,6 +132,18 @@ jobs:
           [ "${{ inputs.fill_untranslated_only }}" = "true" ] && MINIMAL="--fill-untranslated-only"
           PERSIST=""
           [ "$MODE" = "live" ] && PERSIST="--persist-tm"
+          CHANGED_ARG=""
+          if [ "${{ inputs.changed_only }}" = "true" ]; then
+            # Ongoing post-merge: translate only the English pages this merge touched,
+            # in FULL mode (not minimal-churn) so English edits propagate to locales.
+            git -C hugo_content diff --name-only HEAD~1 HEAD -- "content/${WEBSITE}/en" | grep '\.md$' > "${RUNNER_TEMP}/changed.txt" || true
+            echo "Changed English pages:"; cat "${RUNNER_TEMP}/changed.txt" || true
+            if [ ! -s "${RUNNER_TEMP}/changed.txt" ]; then
+              echo "No changed English pages in HEAD~1..HEAD; nothing to translate."; exit 0
+            fi
+            CHANGED_ARG="--changed-files @${RUNNER_TEMP}/changed.txt"
+            MINIMAL=""  # full mode for changed pages
+          fi
           python -m sitepilot translate \
             --content-repo-path hugo_content \
             --en-subpath "content/${WEBSITE}/en" \
@@ -129,7 +151,26 @@ jobs:
             --website "${WEBSITE}" \
             --languages "${LANGS}" \
             --exclude-languages "${DISABLED_LOCALES}" \
-            --fill-misses --write $MINIMAL $PERSIST $GLOSSARY_ARG
+            --fill-misses --write $MINIMAL $PERSIST $CHANGED_ARG $GLOSSARY_ARG
+
+      - name: Translate theme i18n (when requested)
+        if: ${{ inputs.translate_i18n }}
+        shell: bash
+        env:
+          PROFESSIONALIZE_BASE_URL: ${{ secrets.PROFESSIONALIZE_BASE_URL }}
+          PROFESSIONALIZE_API_KEY: ${{ secrets.PROFESSIONALIZE_API_KEY }}
+          PROFESSIONALIZE_TRANSLATION_MODEL: recommended
+        run: |
+          set -euo pipefail
+          PERSIST=""
+          [ "$MODE" = "live" ] && PERSIST="--persist-tm"
+          python -m sitepilot translate-i18n \
+            --i18n-dir hugo_content/themes/docs-theme/i18n \
+            --tm-dir "website_manager/websiteManager/translations/${WEBSITE}" \
+            --website "${WEBSITE}" \
+            --languages "${LANGS}" \
+            --exclude-languages "${DISABLED_LOCALES}" \
+            --fill-misses $PERSIST
 
       # ---- review mode: open a PR with the locale changes, no deploy ----
       - name: Open review PR (review mode)
@@ -175,4 +216,4 @@ jobs:
           git add "content/${WEBSITE}"
           git diff --cached --quiet || { git commit -m "SitePilot: translate ${WEBSITE} [${LANGS}] ($(date -u +'%FT%TZ'))"; git push origin HEAD:main; }
           cd ../sitepilot
-          python -m sitepilot deploy --site "${SITE}" --environment "${{ inputs.environment }}" --max-retries 2 --verify-url "https://docs.familiarize.com/"
+          python -m sitepilot deploy --site "${SITE}" --environment "${{ inputs.environment }}" --max-retries 2 --verify-url "https://${WEBSITE}/"
