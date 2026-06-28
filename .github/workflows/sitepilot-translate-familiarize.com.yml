@@ -67,6 +67,9 @@ jobs:
     timeout-minutes: 180
     environment: ${{ inputs.environment }}
 
+    outputs:
+      deploy_needed: ${{ steps.commit.outputs.deploy_needed }}
+
     env:
       SITE: ${{ inputs.site }}
       WEBSITE: ${{ inputs.site }}.familiarize.com
@@ -196,14 +199,16 @@ jobs:
             --title "SitePilot translation review: ${WEBSITE} [${LANGS}]" \
             --body "First SitePilot-owned translation run (mode=review, minimal churn=${{ inputs.fill_untranslated_only }}, excluding: ${DISABLED_LOCALES:-none}). Review the locale changes; merge to accept, then run a live deploy. No deploy was triggered by this run."
 
-      # ---- live mode: commit to main, persist TM, deploy ----
-      - name: Commit TM + content and deploy (live mode)
+      # ---- live mode: commit to main, persist TM (deploy runs in its own job) ----
+      - name: Commit TM + content (live mode)
+        id: commit
         if: ${{ inputs.mode == 'live' }}
         shell: bash
         env:
           GITHUB_PAT: ${{ secrets.REPO_TOKEN }}
         run: |
           set -euo pipefail
+          DEPLOY=false
           cd website_manager
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -216,6 +221,64 @@ jobs:
           git fetch origin && git pull --strategy=ours origin main || true
           git add "content/${WEBSITE}"
           [ "${{ inputs.translate_i18n }}" = "true" ] && git add themes/docs-theme/i18n || true
-          git diff --cached --quiet || { git commit -m "SitePilot: translate ${WEBSITE} [${LANGS}] ($(date -u +'%FT%TZ'))"; git push origin HEAD:main; }
-          cd ../sitepilot
-          python -m sitepilot deploy --site "${SITE}" --environment "${{ inputs.environment }}" --max-retries 2 --verify-url "https://${WEBSITE}/"
+          if ! git diff --cached --quiet; then
+            git commit -m "SitePilot: translate ${WEBSITE} [${LANGS}] ($(date -u +'%FT%TZ'))"
+            git push origin HEAD:main
+            DEPLOY=true
+          fi
+          echo "deploy_needed=${DEPLOY}" >> "$GITHUB_OUTPUT"
+          echo "deploy_needed=${DEPLOY}"
+
+  # Deploy runs as its own job with an independent (longer) timeout so a slow
+  # build can never outlive the watcher — the failure mode that made the old
+  # inline deploy (inside the 180-min translate job) lose track of the run.
+  deploy:
+    name: Deploy ${{ inputs.site }}
+    needs: translate
+    if: ${{ inputs.mode == 'live' && needs.translate.outputs.deploy_needed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    environment: ${{ inputs.environment }}
+
+    env:
+      SITE: ${{ inputs.site }}
+      WEBSITE: ${{ inputs.site }}.familiarize.com
+
+    concurrency:
+      group: sitepilot-deploy-${{ inputs.environment }}-${{ inputs.site }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout SitePilot
+        uses: actions/checkout@v4
+        with:
+          repository: familiarizeptyltd/SitePilot
+          token: ${{ secrets.REPO_TOKEN }}
+          ref: main
+          path: sitepilot
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install SitePilot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ./sitepilot
+
+      - name: Reliable deploy (state-based watch, retry, verify, escalate)
+        shell: bash
+        working-directory: sitepilot
+        env:
+          GITHUB_PAT: ${{ secrets.REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m sitepilot deploy \
+            --site "${SITE}" \
+            --environment "${{ inputs.environment }}" \
+            --max-retries 2 \
+            --verify-url "https://${WEBSITE}/" \
+            --escalate-repo familiarizeptyltd/familiarize.com-workflows
