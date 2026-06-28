@@ -179,12 +179,14 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           # Moderate cadence: ~10 improvements + 1 new topic per daily run.
-          # Initial rollout: improvements auto-merge (self-reviewed, fails closed),
-          # but NEW pages open as PRs for human review so their uniqueness/scope can
-          # be watched. To fully automate new pages later, add --auto-merge-new-pages.
+          # Initial rollout: improvements auto-merge (self-reviewed, fails closed).
+          # NEW pages open as human-reviewed PRs in SHADOW mode -- the system records
+          # the auto-merge verdict it WOULD make (would-automerge:yes/no) so its
+          # precision can be measured against human review. Once that precision is
+          # trusted, swap --shadow-new-pages for --auto-merge-new-pages.
           MODE_FLAGS="--dry-run"
           if [[ "$MODE" == "live" ]]; then
-            MODE_FLAGS="--live --auto-merge-low-risk"
+            MODE_FLAGS="--live --auto-merge-low-risk --shadow-new-pages"
           fi
           python -m sitepilot lean-cycle \
             --profile "$PROFILE" \
