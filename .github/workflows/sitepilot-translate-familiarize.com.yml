@@ -186,6 +186,7 @@ jobs:
           BRANCH="sitepilot/translate-${SITE}-${LANGS//,/_}-${{ github.run_number }}"
           git checkout -b "$BRANCH"
           git add "content/${WEBSITE}"
+          [ "${{ inputs.translate_i18n }}" = "true" ] && git add themes/docs-theme/i18n || true
           if git diff --cached --quiet; then
             echo "No locale changes to review."; exit 0
           fi
@@ -214,6 +215,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin && git pull --strategy=ours origin main || true
           git add "content/${WEBSITE}"
+          [ "${{ inputs.translate_i18n }}" = "true" ] && git add themes/docs-theme/i18n || true
           git diff --cached --quiet || { git commit -m "SitePilot: translate ${WEBSITE} [${LANGS}] ($(date -u +'%FT%TZ'))"; git push origin HEAD:main; }
           cd ../sitepilot
           python -m sitepilot deploy --site "${SITE}" --environment "${{ inputs.environment }}" --max-retries 2 --verify-url "https://${WEBSITE}/"
