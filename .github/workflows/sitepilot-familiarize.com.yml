@@ -178,23 +178,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          # Moderate cadence: ~10 improvements + 1 new topic per daily run.
-          # Initial rollout: improvements auto-merge (self-reviewed, fails closed).
-          # NEW pages open as human-reviewed PRs in SHADOW mode -- the system records
-          # the auto-merge verdict it WOULD make (would-automerge:yes/no) so its
-          # precision can be measured against human review. Once that precision is
-          # trusted, swap --shadow-new-pages for --auto-merge-new-pages.
+          # Full engine: meta (ctr_rewrite) + body (freshness_refresh) + FAQ (faq_repair)
+          # auto-merge (self-reviewed, fail-closed). --enable-research turns on
+          # researched_expansion (web research + references), which opens HUMAN-REVIEW
+          # PRs (never auto-publishes web-sourced claims). NEW pages open in SHADOW mode
+          # (would-automerge verdict recorded, human-reviewed). Scale --max-improve-prs
+          # as quality is proven; swap --shadow-new-pages for --auto-merge-new-pages later.
           MODE_FLAGS="--dry-run"
           if [[ "$MODE" == "live" ]]; then
-            MODE_FLAGS="--live --auto-merge-low-risk --shadow-new-pages"
+            MODE_FLAGS="--live --auto-merge-low-risk --enable-research --shadow-new-pages"
           fi
           python -m sitepilot lean-cycle \
             --profile "$PROFILE" \
             --section "$SECTION" \
             --content-repo-path "$CONTENT_REPO_PATH" \
             --workflows-repo-path "$WORKFLOWS_REPO_PATH" \
-            --max-improve-prs 10 \
-            --max-new-topic-prs 1 \
+            --max-improve-prs 25 \
+            --max-new-topic-prs 2 \
             --cooldown-days 14 \
             $MODE_FLAGS \
             --output "artifacts/sitepilot-${SECTION}-${MODE}.json"
