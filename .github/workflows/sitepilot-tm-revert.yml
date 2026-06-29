@@ -1,0 +1,40 @@
+name: SitePilot TM Revert (one-off)
+# Reverts the most recent locale-optimize TM write-through commit on the TM repo.
+# Used to undo the first (buggy, wrong-field) locale-optimize TM push.
+on:
+  workflow_dispatch:
+    inputs:
+      grep:
+        description: "Commit-message substring to find the commit to revert"
+        type: string
+        default: "SitePilot locale-optimize: TM write-through"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  revert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout translation memory
+        uses: actions/checkout@v4
+        with:
+          repository: salmansarfraz/websiteManager
+          token: ${{ secrets.WEBSITE_MANAGER_REPO_TOKEN }}
+          ref: master
+          path: tm
+          fetch-depth: 0
+      - name: Revert the matching TM commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tm
+          git config user.name  "sitepilot[bot]"
+          git config user.email "sitepilot[bot]@users.noreply.github.com"
+          SHA="$(git log --grep="${{ inputs.grep }}" --format=%H -n 1 || true)"
+          if [ -z "$SHA" ]; then echo "No commit matching '${{ inputs.grep }}' -- nothing to revert."; exit 0; fi
+          echo "Reverting $SHA: $(git log -1 --format=%s "$SHA")"
+          git revert --no-edit "$SHA"
+          git push origin HEAD:master
+          echo "Reverted and pushed."
