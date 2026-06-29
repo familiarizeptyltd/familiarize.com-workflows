@@ -1,0 +1,184 @@
+name: SitePilot Locale Optimize
+run-name: SitePilot locale-optimize ${{ inputs.site || 'docs' }}
+
+# Locale keyword-gap yield: find in-language searched terms missing from locale
+# pages, LLM-refine them into the localized title (alias-preserving), write through
+# to the TM, re-translate the page. Opens a REVIEW PR for the content change
+# (human confirms alias quality on real volume before we flip to auto). The TM
+# write-through is persisted to master, consistent with translate --persist-tm.
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "Which site"
+        type: choice
+        options: [docs, www, about]
+        default: docs
+        required: true
+      min_impr:
+        description: "Min 28d impressions for a locale query to qualify (long-tail: keep low)"
+        type: string
+        default: "5"
+        required: false
+      limit:
+        description: "Max gaps to apply this run"
+        type: string
+        default: "40"
+        required: false
+  schedule:
+    # Weekly, Monday 05:00 UTC (after the daily content cron). Terminology changes
+    # slowly; weekly keeps the extra GSC collect well within quota.
+    - cron: "0 5 * * 1"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  locale-optimize:
+    name: Locale optimize ${{ inputs.site || 'docs' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    concurrency:
+      group: sitepilot-locale-optimize-${{ inputs.site || 'docs' }}
+      cancel-in-progress: false
+
+    env:
+      SITE: ${{ inputs.site || 'docs' }}
+      WEBSITE: ${{ inputs.site || 'docs' }}.familiarize.com
+      PROFILE: sitepilot/profiles/familiarize.yaml
+      MIN_IMPR: ${{ inputs.min_impr || '5' }}
+      LIMIT: ${{ inputs.limit || '40' }}
+      REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+      PROFESSIONALIZE_API_KEY: ${{ secrets.PROFESSIONALIZE_API_KEY }}
+      PROFESSIONALIZE_BASE_URL: ${{ secrets.PROFESSIONALIZE_BASE_URL }}
+      PROFESSIONALIZE_LLM_MODEL: ${{ secrets.PROFESSIONALIZE_LLM_MODEL }}
+      PROFESSIONALIZE_EMBEDDING_MODEL: ${{ secrets.PROFESSIONALIZE_EMBEDDING_MODEL }}
+
+    steps:
+      - name: Checkout workflows repo
+        uses: actions/checkout@v4
+        with:
+          repository: familiarizeptyltd/familiarize.com-workflows
+          token: ${{ secrets.REPO_TOKEN }}
+          ref: main
+          path: workflows
+
+      - name: Checkout SitePilot
+        uses: actions/checkout@v4
+        with:
+          repository: familiarizeptyltd/SitePilot
+          token: ${{ secrets.REPO_TOKEN }}
+          ref: main
+          path: sitepilot
+
+      - name: Checkout familiarize.com (content)
+        uses: actions/checkout@v4
+        with:
+          repository: familiarizeptyltd/familiarize.com
+          token: ${{ secrets.REPO_TOKEN }}
+          ref: main
+          path: content
+          fetch-depth: 0
+          submodules: true
+
+      - name: Checkout websiteManager (translation memory)
+        uses: actions/checkout@v4
+        with:
+          repository: salmansarfraz/websiteManager
+          token: ${{ secrets.WEBSITE_MANAGER_REPO_TOKEN }}
+          ref: master
+          path: website_manager
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install SitePilot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e sitepilot
+
+      - name: Collect GSC snapshot (deep, dry -- no content changes)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          # Dry, zero-cap lean run just collects + caches the deep GSC/GA4 snapshot
+          # at .sitepilot/snapshot-${SITE}-<day>.pkl. No drafts, no writes.
+          python -m sitepilot lean-cycle \
+            --profile "$PROFILE" \
+            --section "$SITE" \
+            --content-repo-path content \
+            --workflows-repo-path workflows \
+            --max-improve-prs 0 \
+            --max-new-topic-prs 0 \
+            --dry-run \
+            --output artifacts/locale-collect.json
+
+      - name: Locale keyword-gap optimization (refine -> TM write-through -> re-translate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SNAP=".sitepilot/snapshot-${SITE}-$(date -u +%Y%m%d).pkl"
+          if [ ! -f "$SNAP" ]; then
+            echo "Snapshot not found at $SNAP (collect step did not produce it)"; exit 1
+          fi
+          python -m sitepilot locale-optimize \
+            --snapshot "$SNAP" \
+            --content-repo-path content \
+            --website "$WEBSITE" \
+            --tm-dir "website_manager/websiteManager/translations/${WEBSITE}" \
+            --out artifacts/locale-apply.json \
+            --apply --min-impr "$MIN_IMPR" --limit "$LIMIT"
+
+      - name: Persist TM write-through (to master)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd website_manager
+          git config user.name  "sitepilot[bot]"
+          git config user.email "sitepilot[bot]@users.noreply.github.com"
+          git fetch origin && git pull --strategy=ours origin master || true
+          git add "websiteManager/translations/${WEBSITE}"
+          if git diff --cached --quiet; then
+            echo "No TM changes."; exit 0
+          fi
+          git commit -m "SitePilot locale-optimize: TM write-through ${WEBSITE} ($(date -u +'%FT%TZ'))"
+          git push origin HEAD:master
+
+      - name: Open content review PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd content
+          git config user.name  "sitepilot[bot]"
+          git config user.email "sitepilot[bot]@users.noreply.github.com"
+          BRANCH="sitepilot/locale-optimize-${SITE}-${{ github.run_number }}"
+          git checkout -b "$BRANCH"
+          git add "content/${WEBSITE}"
+          if git diff --cached --quiet; then
+            echo "No locale page changes to review."; exit 0
+          fi
+          git commit -m "SitePilot locale-optimize: ${WEBSITE} locale title improvements ($(date -u +'%FT%TZ'))"
+          git push origin "$BRANCH"
+          gh pr create --repo familiarizeptyltd/familiarize.com --base main --head "$BRANCH" \
+            --title "SitePilot locale-optimize: ${WEBSITE} (review)" \
+            --label "sitepilot" --label "locale-optimize" \
+            --body "Autonomous locale keyword-gap optimization: localized titles now include the in-language term the market searches (alias-preserving), written through to the TM. REVIEW the title changes; merge to publish. See artifacts/locale-apply.json for the per-page before/after + impressions. (Review mode -- not auto-merged.)"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: locale-optimize-${{ inputs.site || 'docs' }}
+          path: artifacts/locale-apply.json
+          if-no-files-found: ignore
