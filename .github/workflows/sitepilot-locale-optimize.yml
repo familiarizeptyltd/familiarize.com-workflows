@@ -170,6 +170,9 @@ jobs:
           fi
           git commit -m "SitePilot locale-optimize: ${WEBSITE} locale title improvements ($(date -u +'%FT%TZ'))"
           git push origin "$BRANCH"
+          # Ensure labels exist (gh pr create fails on a missing label).
+          gh label create sitepilot --repo familiarizeptyltd/familiarize.com --color ededed --force >/dev/null 2>&1 || true
+          gh label create locale-optimize --repo familiarizeptyltd/familiarize.com --color 1d76db --description "SitePilot locale keyword-gap optimization" --force >/dev/null 2>&1 || true
           gh pr create --repo familiarizeptyltd/familiarize.com --base main --head "$BRANCH" \
             --title "SitePilot locale-optimize: ${WEBSITE} (review)" \
             --label "sitepilot" --label "locale-optimize" \
