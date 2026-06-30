@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     # docs.familiarize.com is large (~20 locales x ~1.7k pages); the Hugo build is
     # heavy. Allow ample headroom under GitHub's 360-min hosted-runner hard cap.
-    timeout-minutes: 350
+    timeout-minutes: 90  # healthy build ~48min; fail a degraded runner fast so sitepilot deploy retries onto a fresh one (was 350)
 
     env:
       SITE: ${{ github.event.inputs.site }}
