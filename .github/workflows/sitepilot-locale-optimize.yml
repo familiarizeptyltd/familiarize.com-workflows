@@ -23,7 +23,7 @@ on:
       limit:
         description: "Max gaps to apply this run"
         type: string
-        default: "40"
+        default: "600"
         required: false
   schedule:
     # Weekly, Monday 05:00 UTC (after the daily content cron). Terminology changes
@@ -49,7 +49,7 @@ jobs:
       WEBSITE: ${{ inputs.site || 'docs' }}.familiarize.com
       PROFILE: sitepilot/profiles/familiarize.yaml
       MIN_IMPR: ${{ inputs.min_impr || '5' }}
-      LIMIT: ${{ inputs.limit || '40' }}
+      LIMIT: ${{ inputs.limit || '600' }}
       REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
       GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
       PROFESSIONALIZE_API_KEY: ${{ secrets.PROFESSIONALIZE_API_KEY }}
