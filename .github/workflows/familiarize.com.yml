@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     # docs.familiarize.com is large (~20 locales x ~1.7k pages); the Hugo build is
     # heavy. Allow ample headroom under GitHub's 360-min hosted-runner hard cap.
-    timeout-minutes: 180  # 34k-page build is core-bound (~165min on the default 4-core runner). 180 accommodates it; no O(N^2) grind risk post-#162. Revisit if a larger runner is adopted or after foot/menu caching (PR build-perf) lands.
+    timeout-minutes: 300  # 34k-page build is core-bound on the default 4-core runner and exceeded 180min; 300 lets it complete (stopgap - a larger runner is the real fix). Under GitHub's 360-min hosted cap.
 
     env:
       SITE: ${{ github.event.inputs.site }}
