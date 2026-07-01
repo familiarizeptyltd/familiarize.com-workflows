@@ -212,18 +212,39 @@ jobs:
           cd website_manager
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin && git pull --strategy=ours origin master || true
           git add "websiteManager/translations/${WEBSITE}"
-          git diff --cached --quiet || { git commit -m "SitePilot: update ${WEBSITE} TM ($(date -u +'%FT%TZ'))"; git push origin HEAD:master; }
+          if git diff --cached --quiet; then
+            echo "No TM changes."
+          else
+            git commit -m "SitePilot: update ${WEBSITE} TM ($(date -u +'%FT%TZ'))"
+            # Concurrent-safe push: rebase on latest master and retry, so a parallel
+            # TM writer (locale-optimize) is never clobbered (replaces pull --strategy=ours).
+            for attempt in 1 2 3 4 5; do
+              if git push origin HEAD:master; then echo "TM pushed (attempt $attempt)"; break; fi
+              echo "TM push rejected; rebasing on origin/master (attempt $attempt)"
+              git fetch origin master
+              git rebase origin/master || { echo "rebase conflict; union-merge"; git rebase --abort || true; git merge --no-edit origin/master || true; }
+              [ "$attempt" = 5 ] && { echo "TM push failed after retries"; exit 1; }
+              sleep $((attempt * 3))
+            done
+          fi
           cd ../hugo_content
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin && git pull --strategy=ours origin main || true
           git add "content/${WEBSITE}"
           [ "${{ inputs.translate_i18n }}" = "true" ] && git add themes/docs-theme/i18n || true
           if ! git diff --cached --quiet; then
             git commit -m "SitePilot: translate ${WEBSITE} [${LANGS}] ($(date -u +'%FT%TZ'))"
-            git push origin HEAD:main
+            # Concurrent-safe push: rebase on latest main + retry so a parallel content
+            # writer (content-cron auto-merge) is never clobbered (replaces pull --strategy=ours).
+            for attempt in 1 2 3 4 5; do
+              if git push origin HEAD:main; then echo "content pushed (attempt $attempt)"; break; fi
+              echo "content push rejected; rebasing on origin/main (attempt $attempt)"
+              git fetch origin main
+              git rebase origin/main || { echo "rebase conflict; union-merge"; git rebase --abort || true; git merge --no-edit origin/main || true; }
+              [ "$attempt" = 5 ] && { echo "content push failed after retries"; exit 1; }
+              sleep $((attempt * 3))
+            done
             DEPLOY=true
           fi
           echo "deploy_needed=${DEPLOY}" >> "$GITHUB_OUTPUT"
