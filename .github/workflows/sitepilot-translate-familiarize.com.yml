@@ -188,6 +188,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           BRANCH="sitepilot/translate-${SITE}-${LANGS//,/_}-${{ github.run_number }}"
           git checkout -b "$BRANCH"
+          # Standard rule: changed markdown -> lastmod = change date (stamp before staging).
+          python3 ../sitepilot/scripts/stamp_lastmod.py .
           git add "content/${WEBSITE}"
           [ "${{ inputs.translate_i18n }}" = "true" ] && git add themes/docs-theme/i18n || true
           if git diff --cached --quiet; then
@@ -231,6 +233,8 @@ jobs:
           cd ../hugo_content
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Standard rule: changed markdown -> lastmod = change date (stamp before staging).
+          python3 ../sitepilot/scripts/stamp_lastmod.py .
           git add "content/${WEBSITE}"
           [ "${{ inputs.translate_i18n }}" = "true" ] && git add themes/docs-theme/i18n || true
           if ! git diff --cached --quiet; then
