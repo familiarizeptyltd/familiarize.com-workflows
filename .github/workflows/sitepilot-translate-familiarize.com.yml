@@ -86,6 +86,10 @@ jobs:
       LANGS: ${{ inputs.languages }}
       DISABLED_LOCALES: ${{ inputs.exclude_languages }}
       MODE: ${{ inputs.mode }}
+      # Per-site git tag marking the content SHA up to which English pages are translated.
+      # Advanced only after a successful default-range translate+push (see below), so a
+      # coalescing-cancelled run never advances it and the next run diffs from the last SUCCESS.
+      MARKER: sitepilot-translated-${{ inputs.site }}
 
     concurrency:
       group: sitepilot-translate-${{ inputs.environment }}-${{ inputs.site }}
@@ -156,8 +160,20 @@ jobs:
                 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep '\.md$' > "${RUNNER_TEMP}/changed.txt" || true
               echo "Explicit changed English pages:"; cat "${RUNNER_TEMP}/changed.txt" || true
             else
-              # Range mode: diff a configurable base..HEAD (default HEAD~1, i.e. the last merge).
-              BASE="${{ inputs.changed_base }}"; [ -z "$BASE" ] && BASE="HEAD~1"
+              # Range mode: diff BASE..HEAD. An explicit changed_base wins; otherwise default
+              # to the last-translated marker tag (coalescing-proof: it only advances on a
+              # successful full-range translate, so a cancelled run's pages are still ahead of
+              # it and get picked up here). Fall back to HEAD~1 when no marker exists (first run).
+              BASE="${{ inputs.changed_base }}"
+              if [ -z "$BASE" ]; then
+                git -C hugo_content fetch --quiet origin "+refs/tags/${MARKER}:refs/tags/${MARKER}" 2>/dev/null || true
+                if git -C hugo_content rev-parse -q --verify "refs/tags/${MARKER}^{commit}" >/dev/null 2>&1; then
+                  BASE="$(git -C hugo_content rev-parse "refs/tags/${MARKER}^{commit}")"
+                  echo "Using last-translated marker ${MARKER} -> ${BASE}"
+                else
+                  BASE="HEAD~1"; echo "No marker ${MARKER} yet; falling back to HEAD~1"
+                fi
+              fi
               git -C hugo_content diff --name-only "$BASE" HEAD -- "content/${WEBSITE}/en" | grep '\.md$' > "${RUNNER_TEMP}/changed.txt" || true
               echo "Changed English pages (${BASE}..HEAD):"; cat "${RUNNER_TEMP}/changed.txt" || true
             fi
@@ -270,6 +286,20 @@ jobs:
               sleep $((attempt * 3))
             done
             DEPLOY=true
+            # Advance the last-translated marker to the just-pushed HEAD -- ONLY for the default
+            # coalescing-proof range (changed_only, no explicit changed_base/changed_pages). A
+            # manual subset run (e.g. changed_pages recovery) must NOT advance it, or pages
+            # between the old marker and HEAD that it didn't translate would be skipped forever.
+            if [ "${{ inputs.changed_only }}" = "true" ] && [ -z "${{ inputs.changed_base }}" ] && [ -z "${{ inputs.changed_pages }}" ]; then
+              git tag -f "${MARKER}" HEAD
+              if git push -f origin "refs/tags/${MARKER}"; then
+                echo "advanced marker ${MARKER} -> $(git rev-parse --short HEAD)"
+              else
+                echo "warning: marker ${MARKER} push failed (non-fatal; next run falls back to HEAD~1 range)"
+              fi
+            else
+              echo "manual/override run -> marker ${MARKER} left unchanged"
+            fi
           fi
           echo "deploy_needed=${DEPLOY}" >> "$GITHUB_OUTPUT"
           echo "deploy_needed=${DEPLOY}"
