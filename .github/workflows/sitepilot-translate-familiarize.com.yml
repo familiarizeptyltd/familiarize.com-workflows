@@ -49,6 +49,16 @@ on:
         type: boolean
         default: false
         required: false
+      changed_base:
+        description: "changed_only range: git ref to diff HEAD against (default HEAD~1). Set e.g. HEAD~3 to cover a burst of merges."
+        type: string
+        default: ""
+        required: false
+      changed_pages:
+        description: "changed_only override: explicit newline/comma list of English .md page paths (repo-relative) to translate. Recovers a commit that concurrency-coalescing cancelled. Takes precedence over changed_base."
+        type: string
+        default: ""
+        required: false
       translate_i18n:
         description: "Also translate the theme i18n strings (themes/docs-theme/i18n/en.yaml -> locale yamls)"
         type: boolean
@@ -137,12 +147,22 @@ jobs:
           [ "$MODE" = "live" ] && PERSIST="--persist-tm"
           CHANGED_ARG=""
           if [ "${{ inputs.changed_only }}" = "true" ]; then
-            # Ongoing post-merge: translate only the English pages this merge touched,
-            # in FULL mode (not minimal-churn) so English edits propagate to locales.
-            git -C hugo_content diff --name-only HEAD~1 HEAD -- "content/${WEBSITE}/en" | grep '\.md$' > "${RUNNER_TEMP}/changed.txt" || true
-            echo "Changed English pages:"; cat "${RUNNER_TEMP}/changed.txt" || true
+            # Ongoing post-merge: translate only the English pages that changed, in FULL
+            # mode (not minimal-churn) so English edits propagate to locales.
+            if [ -n "${{ inputs.changed_pages }}" ]; then
+              # Explicit page list -- recovers a commit that concurrency-coalescing cancelled
+              # (its pages are no longer in HEAD~1..HEAD). Accept comma- or newline-separated.
+              printf '%s\n' "${{ inputs.changed_pages }}" | tr ',' '\n' \
+                | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep '\.md$' > "${RUNNER_TEMP}/changed.txt" || true
+              echo "Explicit changed English pages:"; cat "${RUNNER_TEMP}/changed.txt" || true
+            else
+              # Range mode: diff a configurable base..HEAD (default HEAD~1, i.e. the last merge).
+              BASE="${{ inputs.changed_base }}"; [ -z "$BASE" ] && BASE="HEAD~1"
+              git -C hugo_content diff --name-only "$BASE" HEAD -- "content/${WEBSITE}/en" | grep '\.md$' > "${RUNNER_TEMP}/changed.txt" || true
+              echo "Changed English pages (${BASE}..HEAD):"; cat "${RUNNER_TEMP}/changed.txt" || true
+            fi
             if [ ! -s "${RUNNER_TEMP}/changed.txt" ]; then
-              echo "No changed English pages in HEAD~1..HEAD; nothing to translate."; exit 0
+              echo "No changed English pages to translate; nothing to do."; exit 0
             fi
             CHANGED_ARG="--changed-files @${RUNNER_TEMP}/changed.txt"
             MINIMAL=""  # full mode for changed pages
