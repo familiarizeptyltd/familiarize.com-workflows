@@ -172,6 +172,9 @@ jobs:
           git config user.email "sitepilot[bot]@users.noreply.github.com"
           BRANCH="sitepilot/locale-optimize-${SITE}-${{ github.run_number }}"
           git checkout -b "$BRANCH"
+          # Standard rule: a changed markdown file's lastmod = its change date. Stamp the
+          # just-patched pages (working-tree diff) before staging so lastmod tracks content.
+          python3 ../sitepilot/scripts/stamp_lastmod.py .
           git add "content/${WEBSITE}"
           if git diff --cached --quiet; then
             echo "No locale page changes to review."; exit 0
