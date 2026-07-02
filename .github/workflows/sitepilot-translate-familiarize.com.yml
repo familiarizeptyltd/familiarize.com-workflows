@@ -356,5 +356,6 @@ jobs:
             --environment "${{ inputs.environment }}" \
             --max-retries 2 \
             --build-soft-deadline-minutes 60 \
+            --max-speculative-retries 3 \
             --verify-url "https://${WEBSITE}/" \
             --escalate-repo familiarizeptyltd/familiarize.com-workflows
