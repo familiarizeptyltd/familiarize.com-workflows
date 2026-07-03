@@ -25,6 +25,11 @@ on:
         type: string
         default: "600"
         required: false
+      reuse_snapshot:
+        description: "Reuse the daily lean run's cached GSC snapshot instead of collecting (quota-safe; used by the daily lean->locale handoff)"
+        type: boolean
+        default: false
+        required: false
   schedule:
     # Weekly, Monday 05:00 UTC (after the daily content cron). Terminology changes
     # slowly; weekly keeps the extra GSC collect well within quota.
@@ -105,7 +110,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e sitepilot
 
+      # Handoff mode: reuse the snapshot the daily lean run already collected+cached
+      # (same repo-wide GHA cache), so no second GSC collect is needed (quota-safe).
+      - name: Reuse daily lean GSC snapshot (handoff)
+        if: ${{ inputs.reuse_snapshot == true || inputs.reuse_snapshot == 'true' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: .sitepilot
+          key: sitepilot-runtime-${{ runner.os }}-${{ inputs.site || 'docs' }}-reuse
+          restore-keys: |
+            sitepilot-runtime-${{ runner.os }}-${{ inputs.site || 'docs' }}-
+
       - name: Collect GSC snapshot (deep, dry -- no content changes)
+        if: ${{ inputs.reuse_snapshot != true && inputs.reuse_snapshot != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -126,10 +143,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p artifacts   # collect step (which used to create it) is skipped in reuse mode
           SNAP=".sitepilot/snapshot-${SITE}-$(date -u +%Y%m%d).pkl"
           if [ ! -f "$SNAP" ]; then
-            echo "Snapshot not found at $SNAP (collect step did not produce it)"; exit 1
+            # Reuse mode across a UTC-day boundary, or collect wrote a different day:
+            # fall back to the newest cached snapshot for this site.
+            SNAP="$(ls -t .sitepilot/snapshot-${SITE}-*.pkl 2>/dev/null | head -1 || true)"
           fi
+          if [ -z "${SNAP:-}" ] || [ ! -f "$SNAP" ]; then
+            echo "No snapshot found for ${SITE} (.sitepilot/snapshot-${SITE}-*.pkl)"; exit 1
+          fi
+          echo "Using snapshot: $SNAP"
           python -m sitepilot locale-optimize \
             --snapshot "$SNAP" \
             --content-repo-path content \

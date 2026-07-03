@@ -125,9 +125,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .sitepilot
-          key: sitepilot-runtime-${{ runner.os }}-${{ inputs.section }}-${{ github.run_id }}
+          key: sitepilot-runtime-${{ runner.os }}-${{ env.SECTION }}-${{ github.run_id }}
           restore-keys: |
-            sitepilot-runtime-${{ runner.os }}-${{ inputs.section }}-
+            sitepilot-runtime-${{ runner.os }}-${{ env.SECTION }}-
 
       - name: Verify required SitePilot secrets
         shell: bash
@@ -311,4 +311,23 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .sitepilot
-          key: sitepilot-runtime-${{ runner.os }}-${{ inputs.section }}-${{ github.run_id }}
+          key: sitepilot-runtime-${{ runner.os }}-${{ env.SECTION }}-${{ github.run_id }}
+
+      # Daily lean->locale handoff: ~99% of improvement demand is locale (measured), and
+      # the demand-routing diverts it to locale-optimize. Dispatch locale-optimize to REUSE
+      # the snapshot this run just cached (no second GSC collect), so locale demand is served
+      # daily. Review-mode PR (auto-merge after a clean week). Only after a successful live
+      # lean docs run; uses REPO_TOKEN so the workflow's own permissions need not widen.
+      - name: Hand off to locale-optimize (reuse today's snapshot)
+        if: ${{ success() && env.BRAIN == 'lean' && env.MODE == 'live' && env.SECTION == 'docs' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api -X POST \
+            "repos/familiarizeptyltd/familiarize.com-workflows/actions/workflows/sitepilot-locale-optimize.yml/dispatches" \
+            -f ref=main \
+            -f "inputs[site]=${SECTION}" \
+            -f "inputs[reuse_snapshot]=true"
+          echo "Dispatched locale-optimize (reuse_snapshot) for ${SECTION}."
