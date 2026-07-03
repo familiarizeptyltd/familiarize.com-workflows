@@ -357,5 +357,6 @@ jobs:
             --max-retries 2 \
             --build-soft-deadline-minutes 60 \
             --max-speculative-retries 3 \
+            --watch-total-budget-minutes 330 \
             --verify-url "https://${WEBSITE}/" \
             --escalate-repo familiarizeptyltd/familiarize.com-workflows
