@@ -1,0 +1,80 @@
+name: SitePilot Deploy familiarize.com
+run-name: SitePilot deploy ${{ github.event.inputs.site || 'docs' }}
+
+# Standalone reliable-deploy entry point. Runs the hardened `sitepilot deploy`
+# (state-based watch, speculative runner redraw, total-budget hand-off, live-URL
+# verify, escalate) against the current main. Dispatched by any path that lands
+# content on main and needs a publish without going through translate -- e.g. the
+# locale-optimize auto-merge -- and usable manually to publish/verify on demand.
+
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "Which site to deploy"
+        type: choice
+        options: [docs, www, about]
+        default: docs
+        required: true
+      environment:
+        description: "Environment"
+        type: environment
+        default: production
+        required: true
+
+permissions:
+  contents: read
+  actions: write   # dispatch/cancel the underlying Deployment workflow during redraw
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.site }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # GitHub hosted-job hard cap; the watcher self-limits to 330 (hand-off)
+    environment: ${{ inputs.environment }}
+
+    env:
+      SITE: ${{ inputs.site }}
+      WEBSITE: ${{ inputs.site }}.familiarize.com
+
+    concurrency:
+      group: sitepilot-deploy-${{ inputs.environment }}-${{ inputs.site }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout SitePilot
+        uses: actions/checkout@v4
+        with:
+          repository: familiarizeptyltd/SitePilot
+          token: ${{ secrets.REPO_TOKEN }}
+          ref: main
+          path: sitepilot
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install SitePilot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ./sitepilot
+
+      - name: Reliable deploy (state-based watch, redraw, verify, escalate)
+        shell: bash
+        working-directory: sitepilot
+        env:
+          GITHUB_PAT: ${{ secrets.REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m sitepilot deploy \
+            --site "${SITE}" \
+            --environment "${{ inputs.environment }}" \
+            --max-retries 2 \
+            --build-soft-deadline-minutes 60 \
+            --max-speculative-retries 3 \
+            --watch-total-budget-minutes 330 \
+            --verify-url "https://${WEBSITE}/" \
+            --escalate-repo familiarizeptyltd/familiarize.com-workflows
