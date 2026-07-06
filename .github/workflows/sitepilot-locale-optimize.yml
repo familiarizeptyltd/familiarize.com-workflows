@@ -185,7 +185,7 @@ jobs:
             sleep $((attempt * 3))
           done
 
-      - name: Open content review PR
+      - name: Open PR — auto-merge + publish if verified clean, else review
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.REPO_TOKEN }}
@@ -196,22 +196,46 @@ jobs:
           git config user.email "sitepilot[bot]@users.noreply.github.com"
           BRANCH="sitepilot/locale-optimize-${SITE}-${{ github.run_number }}"
           git checkout -b "$BRANCH"
-          # Standard rule: a changed markdown file's lastmod = its change date. Stamp the
-          # just-patched pages (working-tree diff) before staging so lastmod tracks content.
+          # AUTO-MERGE GATE: re-prove on the ACTUAL diff that every SEO-field change is a
+          # pure additive alias (value -> value (term)), with zero operator/foreign-script/
+          # Traditional contamination and no protected-field (url/title) touch -- the same
+          # rules the selector uses. A verified-clean diff auto-merges + publishes; anything
+          # the verifier flags falls back to a human-review PR (no merge, no deploy).
+          AUTOMERGE=""
+          if python3 ../sitepilot/scripts/verify_locale_diff.py . "${WEBSITE}"; then
+            AUTOMERGE="yes"
+          else
+            echo "Locale diff did NOT pass the auto-merge verifier -> REVIEW PR only."
+          fi
+          # Standard rule: a changed markdown file's lastmod = its change date.
           python3 ../sitepilot/scripts/stamp_lastmod.py .
           git add "content/${WEBSITE}"
           if git diff --cached --quiet; then
-            echo "No locale page changes to review."; exit 0
+            echo "No locale page changes."; exit 0
           fi
           git commit -m "SitePilot locale-optimize: ${WEBSITE} locale title improvements ($(date -u +'%FT%TZ'))"
           git push origin "$BRANCH"
-          # Ensure labels exist (gh pr create fails on a missing label).
           gh label create sitepilot --repo familiarizeptyltd/familiarize.com --color ededed --force >/dev/null 2>&1 || true
           gh label create locale-optimize --repo familiarizeptyltd/familiarize.com --color 1d76db --description "SitePilot locale keyword-gap optimization" --force >/dev/null 2>&1 || true
-          gh pr create --repo familiarizeptyltd/familiarize.com --base main --head "$BRANCH" \
-            --title "SitePilot locale-optimize: ${WEBSITE} (review)" \
+          if [ -n "$AUTOMERGE" ]; then
+            NOTE="(VERIFIED: pure additive aliasing, 0 contamination -> auto-merged + published.)"
+          else
+            NOTE="(Review mode -- the verifier flagged the diff; review the changes, merge to publish.)"
+          fi
+          PR_URL=$(gh pr create --repo familiarizeptyltd/familiarize.com --base main --head "$BRANCH" \
+            --title "SitePilot locale-optimize: ${WEBSITE}" \
             --label "sitepilot" --label "locale-optimize" \
-            --body "Autonomous locale keyword-gap optimization: localized titles now include the in-language term the market searches (alias-preserving), written through to the TM. REVIEW the title changes; merge to publish. See artifacts/locale-apply.json for the per-page before/after + impressions. (Review mode -- not auto-merged.)"
+            --body "Autonomous locale keyword-gap optimization: localized titles now include the in-language term the market searches (alias-preserving), written through to the TM. See artifacts/locale-apply.json for the per-page before/after + impressions. ${NOTE}")
+          echo "Opened ${PR_URL}"
+          # Verified clean -> merge immediately (main is unprotected) and dispatch the
+          # standalone hardened deploy to publish (locale-only changes have no other
+          # auto-publish path). Flagged -> leave the review PR for a human.
+          if [ -n "$AUTOMERGE" ]; then
+            gh pr merge "$PR_URL" --repo familiarizeptyltd/familiarize.com --squash
+            echo "Auto-merged. Dispatching hardened deploy to publish..."
+            gh workflow run sitepilot-deploy.yml --repo familiarizeptyltd/familiarize.com-workflows \
+              -f site="${SITE}" -f environment=production
+          fi
 
       - name: Upload report
         if: always()
