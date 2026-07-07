@@ -320,6 +320,7 @@ jobs:
             --section "$SECTION" \
             --snapshot "$SNAP" \
             --content-repo-path "$CONTENT_REPO_PATH" \
+            --escalate-repo familiarizeptyltd/SitePilot \
             --output "artifacts/impact-${SECTION}.json" \
             || echo "impact step soft-failed (non-fatal, observational only)"
 
