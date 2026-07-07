@@ -298,6 +298,31 @@ jobs:
               print(f"- Pull request: {pr.get('url')}")
           PY
 
+      # Measure whether merged changes actually helped, from the snapshot this run already
+      # collected (no extra GSC/GA4 quota). Pins baselines for newly-merged PRs (English
+      # content + locale-optimize) and reads verdicts at the 30-day horizon; the ledger lives
+      # in .sitepilot so it rides the runtime-state cache below. Observational only:
+      # continue-on-error so it can never break the content pipeline.
+      - name: Measure impact (regression guard + per-action-type precision)
+        if: always() && env.BRAIN == 'lean'
+        shell: bash
+        continue-on-error: true
+        env:
+          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+        run: |
+          set -uo pipefail
+          SNAP="$(ls -t .sitepilot/snapshot-${SECTION}-*.pkl 2>/dev/null | head -1 || true)"
+          [ -z "$SNAP" ] && SNAP="$(ls -t .sitepilot/snapshot-*.pkl 2>/dev/null | head -1 || true)"
+          if [ -z "$SNAP" ]; then echo "no snapshot found; skipping impact measurement"; exit 0; fi
+          echo "Measuring impact from ${SNAP}"
+          python -m sitepilot impact \
+            --profile "$PROFILE" \
+            --section "$SECTION" \
+            --snapshot "$SNAP" \
+            --content-repo-path "$CONTENT_REPO_PATH" \
+            --output "artifacts/impact-${SECTION}.json" \
+            || echo "impact step soft-failed (non-fatal, observational only)"
+
       - name: Upload SitePilot artifacts
         if: always()
         uses: actions/upload-artifact@v4
