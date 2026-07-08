@@ -76,6 +76,7 @@ jobs:
       # Optional paid verifier for the auto-merge fact gate (Layer-2 fact-check + repair only).
       # If unset, SitePilot falls back to Professionalize automatically -- safe either way.
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      ZAI_MODEL: ${{ vars.ZAI_MODEL }}
       GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
       GOOGLE_ADS_CUSTOMER_ID: ${{ secrets.GOOGLE_ADS_CUSTOMER_ID }}
       GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ secrets.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
