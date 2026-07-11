@@ -91,9 +91,17 @@ jobs:
       # coalescing-cancelled run never advances it and the next run diffs from the last SUCCESS.
       MARKER: sitepilot-translated-${{ inputs.site }}
 
+    # Shared TM-writers group: translate and locale-optimize BOTH push the translation
+    # memory (salmansarfraz/websiteManager) + locale content. Running them concurrently
+    # races the push -- seen live 2026-07-11: locale-optimize pushed first, translate's
+    # TM push was rejected and its rebase-retry wedged on a dirty worktree -> run failed,
+    # losing that morning's translations. One global queue (cancel-in-progress: false)
+    # serializes every TM writer; a second translate now QUEUES instead of cancelling the
+    # first (safer than the old coalescing cancel -- no mid-commit cancellations to
+    # recover, and each translate covers the full changed range anyway).
     concurrency:
-      group: sitepilot-translate-${{ inputs.environment }}-${{ inputs.site }}
-      cancel-in-progress: true
+      group: sitepilot-tm-writes
+      cancel-in-progress: false
 
     steps:
       - name: Checkout familiarize.com (content)

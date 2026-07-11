@@ -45,8 +45,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
+    # Shared TM-writers group (same group as the translate job): both workflows push the
+    # translation memory + locale content, and running them concurrently races the push
+    # (translate failed live on 2026-07-11 when this job pushed first). One global queue
+    # serializes all TM writers.
     concurrency:
-      group: sitepilot-locale-optimize-${{ inputs.site || 'docs' }}
+      group: sitepilot-tm-writes
       cancel-in-progress: false
 
     env:
