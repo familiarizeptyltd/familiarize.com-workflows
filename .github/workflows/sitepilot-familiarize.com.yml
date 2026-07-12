@@ -176,6 +176,29 @@ jobs:
             --rebuild \
             --output artifacts/semantic-index.json
 
+      - name: Replenish topic-ideation queue (no-op while healthy)
+        # GSC only surfaces queries the site already ranks for, so the demand-gap new-topic
+        # source yields ~zero on a mature site. ideate-topics keeps a machine-filtered queue
+        # of net-new long-tail ideas (.sitepilot/topic-queue.json, rides the runtime cache);
+        # the lean run below tops up its new-topic budget from it through the unchanged
+        # guarded funnel (semantic re-check -> research grounding -> shadow mode).
+        # --replenish-below makes this a ZERO-COST no-op while >=10 ideas are pending.
+        # continue-on-error: a failed replenish must never block the daily content run.
+        if: env.BRAIN == 'lean' && env.MODE == 'live'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python -m sitepilot ideate-topics \
+            --profile "$PROFILE" \
+            --section "$SECTION" \
+            --content-repo-path "$CONTENT_REPO_PATH" \
+            --workflows-repo-path "$WORKFLOWS_REPO_PATH" \
+            --replenish-below 10 \
+            --queue-limit 30 \
+            --output "artifacts/ideate-${SECTION}.json"
+
       - name: Run SitePilot (lean brain)
         if: env.BRAIN == 'lean'
         shell: bash
