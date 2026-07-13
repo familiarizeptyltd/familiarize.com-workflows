@@ -195,6 +195,7 @@ jobs:
             --section "$SECTION" \
             --content-repo-path "$CONTENT_REPO_PATH" \
             --workflows-repo-path "$WORKFLOWS_REPO_PATH" \
+            --mode both \
             --replenish-below 10 \
             --queue-limit 30 \
             --output "artifacts/ideate-${SECTION}.json"
@@ -221,7 +222,7 @@ jobs:
             --content-repo-path "$CONTENT_REPO_PATH" \
             --workflows-repo-path "$WORKFLOWS_REPO_PATH" \
             --max-improve-prs 25 \
-            --max-new-topic-prs 2 \
+            --max-new-topic-prs 3 \
             --cooldown-days 14 \
             $MODE_FLAGS \
             --output "artifacts/sitepilot-${SECTION}-${MODE}.json"
