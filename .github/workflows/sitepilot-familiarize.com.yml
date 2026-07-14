@@ -222,7 +222,7 @@ jobs:
             --content-repo-path "$CONTENT_REPO_PATH" \
             --workflows-repo-path "$WORKFLOWS_REPO_PATH" \
             --max-improve-prs 25 \
-            --max-new-topic-prs 3 \
+            --max-new-topic-prs 4 \
             --cooldown-days 14 \
             $MODE_FLAGS \
             --output "artifacts/sitepilot-${SECTION}-${MODE}.json"
