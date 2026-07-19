@@ -352,6 +352,31 @@ jobs:
             --output "artifacts/impact-${SECTION}.json" \
             || echo "impact step soft-failed (non-fatal, observational only)"
 
+      # Score SitePilot's OWN shadow auto-merge verdicts against what actually happened
+      # (merged untouched / merged after a human fix / closed) -> per-archetype precision.
+      # Until this ran, the only way to know whether the machine's judgment was trustworthy
+      # was for an operator to hand-query GitHub and re-read every page. The ledger lives in
+      # .sitepilot so it rides the runtime-state cache below.
+      #
+      # READ-ONLY and OBSERVATIONAL: it merges nothing and changes no gate. The report is
+      # EVIDENCE for a human promotion decision, never a trigger -- and the number measures
+      # agreement with the reviewer, not correctness, so it is only as good as the reviews
+      # behind it. continue-on-error so it can never break the content pipeline.
+      - name: Score shadow auto-merge verdicts (per-archetype precision)
+        if: always() && env.BRAIN == 'lean'
+        shell: bash
+        continue-on-error: true
+        env:
+          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+        run: |
+          set -uo pipefail
+          python -m sitepilot verdicts \
+            --profile "$PROFILE" \
+            --section "$SECTION" \
+            --content-repo-path "$CONTENT_REPO_PATH" \
+            --output "artifacts/verdicts-${SECTION}.json" \
+            || echo "verdicts step soft-failed (non-fatal, observational only)"
+
       - name: Upload SitePilot artifacts
         if: always()
         uses: actions/upload-artifact@v4
