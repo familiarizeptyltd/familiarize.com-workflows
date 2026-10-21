@@ -1,0 +1,107 @@
+name: SitePilot Watchdog
+
+# Keeps the SitePilot automation alive, and loud when it is not.
+#
+# This repo is public, and GitHub auto-disables scheduled workflows in a public repo after
+# 60 days with no repository activity. That silently stopped the daily SitePilot run on
+# 2026-09-18 (last commit here was 2026-07-19) and nobody noticed for a month. Daily, this job:
+#   1. self-heals: re-enables a SitePilot workflow GitHub disabled for INACTIVITY
+#      (never one a human disabled on purpose);
+#   2. alerts: opens a `sitepilot-watchdog` issue when the daily run has had no successful run
+#      in STALE_HOURS, and closes it automatically once runs recover;
+#   3. keeps the repo active: commits a timestamp when the last commit is KEEPALIVE_DAYS old,
+#      which resets GitHub's 60-day clock for every scheduled workflow here, this one included.
+
+on:
+  schedule:
+    - cron: "17 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+
+concurrency:
+  group: sitepilot-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      DAILY: sitepilot-familiarize.com.yml
+      WATCHED: sitepilot-familiarize.com.yml sitepilot-locale-optimize.yml sitepilot-watchdog.yml
+      STALE_HOURS: "48"
+      KEEPALIVE_DAYS: "45"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Re-enable workflows GitHub disabled for inactivity
+        run: |
+          for wf in $WATCHED; do
+            state=$(gh api "repos/$REPO/actions/workflows/$wf" --jq .state)
+            echo "$wf: $state"
+            case "$state" in
+              active)
+                # Re-enabling an active workflow is a no-op that also refreshes its inactivity timer.
+                gh api -X PUT "repos/$REPO/actions/workflows/$wf/enable" ;;
+              disabled_inactivity)
+                gh api -X PUT "repos/$REPO/actions/workflows/$wf/enable"
+                echo "::warning::re-enabled $wf (GitHub had disabled it for inactivity)" ;;
+              *)
+                # disabled_manually etc.: a human paused it on purpose -- leave it alone.
+                echo "::notice::$wf is $state; not touching it" ;;
+            esac
+          done
+
+      - name: Alert when the daily run is stale
+        run: |
+          state=$(gh api "repos/$REPO/actions/workflows/$DAILY" --jq .state)
+          if [ "$state" = "disabled_manually" ]; then
+            echo "$DAILY is disabled manually (intentional pause); no staleness alert."
+            exit 0
+          fi
+          last=$(gh run list --repo "$REPO" --workflow "$DAILY" --status success --limit 1 \
+                   --json createdAt --jq '.[0].createdAt // empty')
+          if [ -n "$last" ]; then
+            age_h=$(( ( $(date -u +%s) - $(date -u -d "$last" +%s) ) / 3600 ))
+          else
+            age_h=999999
+          fi
+          echo "last successful $DAILY run: ${last:-never} (${age_h}h ago)"
+          open=$(gh issue list --repo "$REPO" --state open --label sitepilot-watchdog \
+                   --json number --jq '.[0].number // empty')
+          if [ "$age_h" -gt "$STALE_HOURS" ]; then
+            echo "::error::$DAILY has not succeeded in ${age_h}h (threshold ${STALE_HOURS}h)"
+            if [ -z "$open" ]; then
+              gh label create sitepilot-watchdog --repo "$REPO" --color B60205 \
+                --description "SitePilot liveness alarm" 2>/dev/null || true
+              gh issue create --repo "$REPO" --label sitepilot-watchdog \
+                --title "SitePilot daily run is stale (no success in ${age_h}h)" \
+                --body "The daily SitePilot run (\`$DAILY\`) has not completed successfully since **${last:-never}** (${age_h}h ago; alert threshold ${STALE_HOURS}h). Nothing is being published while this lasts.
+
+          Check: [recent runs](https://github.com/$REPO/actions/workflows/$DAILY) for failures, and the workflow state (currently \`$state\`). If GitHub disabled it for inactivity, this watchdog has already re-enabled it.
+
+          This issue closes itself once the daily run succeeds again."
+            fi
+          elif [ -n "$open" ]; then
+            gh issue close "$open" --repo "$REPO" \
+              --comment "Recovered: last successful daily run ${last} (${age_h}h ago)."
+          fi
+
+      - name: Keep the repo active (resets the 60-day inactivity clock)
+        run: |
+          age_d=$(( ( $(date -u +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "last commit ${age_d} days ago (keepalive at ${KEEPALIVE_DAYS})"
+          if [ "$age_d" -ge "$KEEPALIVE_DAYS" ]; then
+            date -u +%Y-%m-%dT%H:%M:%SZ > .github/keepalive
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/keepalive
+            git commit -m "chore: keepalive (prevents GitHub's 60-day scheduled-workflow disable)"
+            git push
+          fi
