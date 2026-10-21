@@ -61,6 +61,11 @@ jobs:
       SECTION: ${{ inputs.section || 'docs' }}
       MODE: ${{ inputs.mode || 'live' }}
       BRAIN: ${{ inputs.brain || 'lean' }}
+      # New-page drafting switch: "on" = shadow-mode new pages + topic ideation, "off" =
+      # improvements only. OFF since 2026-10-21: a review of all 41 drafts the machine judged
+      # safe to publish found 0 publishable unchanged, and 184 shadow PRs had piled up
+      # unreviewed. Freshness/CTR/locale work is unaffected. Set back to "on" to resume.
+      NEW_PAGES: "off"
       PROFILE: sitepilot/profiles/familiarize.yaml
       CONTENT_REPO_PATH: content
       WORKFLOWS_REPO_PATH: workflows
@@ -184,7 +189,7 @@ jobs:
         # guarded funnel (semantic re-check -> research grounding -> shadow mode).
         # --replenish-below makes this a ZERO-COST no-op while >=10 ideas are pending.
         # continue-on-error: a failed replenish must never block the daily content run.
-        if: env.BRAIN == 'lean' && env.MODE == 'live'
+        if: env.BRAIN == 'lean' && env.MODE == 'live' && env.NEW_PAGES == 'on'
         continue-on-error: true
         shell: bash
         run: |
@@ -212,9 +217,11 @@ jobs:
           # PRs (never auto-publishes web-sourced claims). NEW pages open in SHADOW mode
           # (would-automerge verdict recorded, human-reviewed). Scale --max-improve-prs
           # as quality is proven; swap --shadow-new-pages for --auto-merge-new-pages later.
-          MODE_FLAGS="--dry-run"
+          NEW_PAGE_FLAG="--no-new-pages"
+          if [[ "$NEW_PAGES" == "on" ]]; then NEW_PAGE_FLAG="--shadow-new-pages"; fi
+          MODE_FLAGS="--dry-run $NEW_PAGE_FLAG"
           if [[ "$MODE" == "live" ]]; then
-            MODE_FLAGS="--live --auto-merge-low-risk --enable-research --shadow-new-pages"
+            MODE_FLAGS="--live --auto-merge-low-risk --enable-research $NEW_PAGE_FLAG"
           fi
           python -m sitepilot lean-cycle \
             --profile "$PROFILE" \
