@@ -66,6 +66,12 @@ jobs:
       # safe to publish found 0 publishable unchanged, and 184 shadow PRs had piled up
       # unreviewed. Freshness/CTR/locale work is unaffected. Set back to "on" to resume.
       NEW_PAGES: "off"
+      # Improvement auto-merge switch (freshness/CTR/FAQ): "on" = publish low-risk drafts that
+      # pass the gates, "off" = open review PRs instead. OFF since 2026-10-21: an audit of that
+      # day's 25 auto-merged freshness PRs found 3 fine, 8 needing fixes and 14 worth reverting
+      # (no-op lastmod-only diffs; rewrites that deleted existing bullets; unchecked errors).
+      # Locale-optimize auto-merge is a separate workflow and is unaffected.
+      IMPROVE_AUTOMERGE: "off"
       PROFILE: sitepilot/profiles/familiarize.yaml
       CONTENT_REPO_PATH: content
       WORKFLOWS_REPO_PATH: workflows
@@ -246,7 +252,9 @@ jobs:
           if [[ "$NEW_PAGES" == "on" ]]; then NEW_PAGE_FLAG="--shadow-new-pages"; fi
           MODE_FLAGS="--dry-run $NEW_PAGE_FLAG"
           if [[ "$MODE" == "live" ]]; then
-            MODE_FLAGS="--live --auto-merge-low-risk --enable-research $NEW_PAGE_FLAG"
+            AUTOMERGE_FLAG=""
+            if [[ "$IMPROVE_AUTOMERGE" == "on" ]]; then AUTOMERGE_FLAG="--auto-merge-low-risk"; fi
+            MODE_FLAGS="--live $AUTOMERGE_FLAG --enable-research $NEW_PAGE_FLAG"
           fi
           python -m sitepilot lean-cycle \
             --profile "$PROFILE" \
