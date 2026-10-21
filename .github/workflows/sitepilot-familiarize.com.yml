@@ -138,6 +138,31 @@ jobs:
           restore-keys: |
             sitepilot-runtime-${{ runner.os }}-${{ env.SECTION }}-
 
+      # The Actions cache is evicted after 7 days unused (and LRU past 10 GB per repo). That
+      # wiped the impact ledger, cooldowns and topic queue during the 2026-09 outage. The small
+      # JSON state is therefore ALSO kept on the `sitepilot-state` branch of the PRIVATE SitePilot
+      # repo (this workflows repo is public -- never store GSC data here). Restore only FILLS GAPS:
+      # a fresh cache always wins; the durable copy refills what eviction removed.
+      - name: Restore durable SitePilot state
+        if: env.BRAIN == 'lean'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://x-access-token:${REPO_TOKEN}@github.com/familiarizeptyltd/SitePilot.git"
+          if ! git ls-remote --exit-code --heads "$url" sitepilot-state >/dev/null 2>&1; then
+            echo "no sitepilot-state branch yet -- cache only"; exit 0
+          fi
+          rm -rf /tmp/sp-state
+          git clone --quiet --depth 1 --branch sitepilot-state "$url" /tmp/sp-state
+          mkdir -p .sitepilot
+          n=0
+          for f in /tmp/sp-state/"$SECTION"/*.json; do
+            [ -e "$f" ] || continue
+            if [ ! -e ".sitepilot/$(basename "$f")" ]; then cp "$f" .sitepilot/; n=$((n+1)); fi
+          done
+          echo "refilled $n durable state file(s) missing from the cache"
+
       - name: Verify required SitePilot secrets
         shell: bash
         run: |
@@ -398,6 +423,37 @@ jobs:
         with:
           path: .sitepilot
           key: sitepilot-runtime-${{ runner.os }}-${{ env.SECTION }}-${{ github.run_id }}
+
+      # Durable copy of the small JSON state (see "Restore durable SitePilot state"). Live runs
+      # only, so a dry run can never overwrite real state. GSC snapshots (.pkl) and other large
+      # files stay cache-only: they are re-collected daily.
+      - name: Persist durable SitePilot state
+        if: always() && env.BRAIN == 'lean' && env.MODE == 'live'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find .sitepilot -maxdepth 1 -type f -name '*.json' -size -5M 2>/dev/null | sort)
+          if [ "${#files[@]}" -eq 0 ]; then echo "no JSON state to persist"; exit 0; fi
+          url="https://x-access-token:${REPO_TOKEN}@github.com/familiarizeptyltd/SitePilot.git"
+          d=/tmp/sp-state-push; rm -rf "$d"
+          if git ls-remote --exit-code --heads "$url" sitepilot-state >/dev/null 2>&1; then
+            git clone --quiet --depth 1 --branch sitepilot-state "$url" "$d"
+          else
+            git init --quiet "$d"
+            git -C "$d" checkout --quiet --orphan sitepilot-state
+            git -C "$d" remote add origin "$url"
+          fi
+          mkdir -p "$d/$SECTION"
+          cp "${files[@]}" "$d/$SECTION/"
+          cd "$d"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "durable state unchanged"; exit 0; fi
+          git commit --quiet -m "state: ${SECTION} after run ${GITHUB_RUN_ID}"
+          git push --quiet origin HEAD:sitepilot-state
+          echo "persisted ${#files[@]} state file(s) for ${SECTION}"
 
       # Daily lean->locale handoff: ~99% of improvement demand is locale (measured), and
       # the demand-routing diverts it to locale-optimize. Dispatch locale-optimize to REUSE
