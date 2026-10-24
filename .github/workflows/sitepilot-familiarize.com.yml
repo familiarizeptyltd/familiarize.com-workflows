@@ -72,6 +72,13 @@ jobs:
       # (no-op lastmod-only diffs; rewrites that deleted existing bullets; unchecked errors).
       # Locale-optimize auto-merge is a separate workflow and is unaffected.
       IMPROVE_AUTOMERGE: "off"
+      # Locale-optimize switch: "on" = hand off to sitepilot-locale-optimize after the daily run,
+      # "off" = skip it. OFF since 2026-10-25: an audit of 69 auto-merged locale titles found
+      # raw search queries appended in brackets -- typos ("microstratey"), wrong concepts
+      # ("Crawling Peg (hard peg)"), English on non-English pages -- and 38/69 titles pushed
+      # past 60 chars. Paused at the job (not just the merge) because the TM write-through runs
+      # before any PR. Set back to "on" once the term-selection rule is fixed.
+      LOCALE_OPTIMIZE: "off"
       PROFILE: sitepilot/profiles/familiarize.yaml
       CONTENT_REPO_PATH: content
       WORKFLOWS_REPO_PATH: workflows
@@ -469,7 +476,7 @@ jobs:
       # daily. Review-mode PR (auto-merge after a clean week). Only after a successful live
       # lean docs run; uses REPO_TOKEN so the workflow's own permissions need not widen.
       - name: Hand off to locale-optimize (reuse today's snapshot)
-        if: ${{ success() && env.BRAIN == 'lean' && env.MODE == 'live' && env.SECTION == 'docs' }}
+        if: ${{ success() && env.BRAIN == 'lean' && env.MODE == 'live' && env.SECTION == 'docs' && env.LOCALE_OPTIMIZE == 'on' }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.REPO_TOKEN }}

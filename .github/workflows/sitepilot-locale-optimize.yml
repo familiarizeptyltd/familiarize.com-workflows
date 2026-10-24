@@ -30,10 +30,10 @@ on:
         type: boolean
         default: false
         required: false
-  schedule:
-    # Weekly, Monday 05:00 UTC (after the daily content cron). Terminology changes
-    # slowly; weekly keeps the extra GSC collect well within quota.
-    - cron: "0 5 * * 1"
+  # Weekly schedule PAUSED 2026-10-25 (see LOCALE_OPTIMIZE in sitepilot-familiarize.com.yml):
+  # appended raw-query aliases were low quality. Restore to resume:
+  # schedule:
+  #   - cron: "0 5 * * 1"
 
 permissions:
   contents: read
